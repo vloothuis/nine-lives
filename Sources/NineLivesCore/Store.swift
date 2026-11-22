@@ -1,0 +1,45 @@
+import Foundation
+
+/// Persists `AppState` as JSON in Application Support.
+public final class StateStore: @unchecked Sendable {
+    public let directory: URL
+    private let fileURL: URL
+    private let lock = NSLock()
+
+    public static var defaultDirectory: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Nine Lives", isDirectory: true)
+    }
+
+    public init(directory: URL = StateStore.defaultDirectory) {
+        self.directory = directory
+        self.fileURL = directory.appendingPathComponent("state.json")
+    }
+
+    public func load() -> AppState {
+        lock.lock(); defer { lock.unlock() }
+        guard let data = try? Data(contentsOf: fileURL) else { return AppState() }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        var state = (try? decoder.decode(AppState.self, from: data)) ?? AppState()
+        state.settings.mergeDefaultRules()
+        return state
+    }
+
+    public func save(_ state: AppState) {
+        lock.lock(); defer { lock.unlock() }
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            try encoder.encode(state).write(to: fileURL, options: .atomic)
+        } catch {
+            NSLog("Nine Lives: could not save state: \(error)")
+        }
+    }
+
+    public var borgBaseDirectory: URL { directory.appendingPathComponent("Borg", isDirectory: true) }
+    public var sshDirectory: URL { directory.appendingPathComponent("SSH", isDirectory: true) }
+    public var catalogDirectory: URL { directory.appendingPathComponent("Catalogs", isDirectory: true) }
+}

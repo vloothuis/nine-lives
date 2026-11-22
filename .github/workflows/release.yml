@@ -1,0 +1,68 @@
+name: Release
+# Run from the Actions tab. The version is the date (YYYY.MM.DD); a second release on the same day becomes YYYY.MM.DD.1, and so on.
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency: release
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - id: v
+        run: |
+          base=$(date -u +%Y.%m.%d)
+          v=$base; n=0
+          while git rev-parse -q --verify "refs/tags/v$v" >/dev/null; do n=$((n+1)); v="$base.$n"; done
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
+    runs-on: macos-15
+    strategy:
+      matrix:
+        arch: [arm64, x86_64]
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/fetch-borg.sh
+      - run: scripts/bundle.sh
+      - name: Make DMG
+        run: |
+          stage=$(mktemp -d)
+          cp -R "dist/Nine Lives.app" "$stage/"
+          ln -s /Applications "$stage/Applications"
+          hdiutil create -volname "Nine Lives" -srcfolder "$stage" -ov -format UDZO \
+            "dist/NineLives-$VERSION-${ARCH}.dmg"
+          (cd dist && shasum -a 256 "NineLives-$VERSION-${ARCH}.dmg" > "NineLives-$VERSION-${ARCH}.dmg.sha256")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dmg-${{ matrix.arch }}
+          path: dist/NineLives-*
+
+  publish:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Create release
+        run: |
+          gh release create "v$VERSION" assets/* \
+            --target "$GITHUB_SHA" \
+            --title "Nine Lives $VERSION" \
+            --generate-notes \
+            --notes-start-tag "$(gh release list --limit 1 --json tagName -q '.[0].tagName')" 2>/dev/null \
+          || gh release create "v$VERSION" assets/* --target "$GITHUB_SHA" --title "Nine Lives $VERSION" --generate-notes

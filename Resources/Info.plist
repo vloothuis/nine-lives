@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key><string>en</string>
+    <key>CFBundleExecutable</key><string>NineLives</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
+    <key>CFBundleIdentifier</key><string>org.ninelives.NineLives</string>
+    <key>CFBundleName</key><string>Nine Lives</string>
+    <key>CFBundleDisplayName</key><string>Nine Lives</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>__VERSION__</string>
+    <key>CFBundleVersion</key><string>__BUILD__</string>
+    <key>LSMinimumSystemVersion</key><string>15.0</string>
+    <key>LSUIElement</key><true/>
+    <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
+    <key>NSHumanReadableCopyright</key><string>BSD 3-Clause License</string>
+    <key>NSRemovableVolumesUsageDescription</key>
+    <string>Nine Lives saves your backups on removable disks.</string>
+    <key>NSDocumentsFolderUsageDescription</key>
+    <string>Nine Lives backs up your documents.</string>
+    <key>NSDesktopFolderUsageDescription</key>
+    <string>Nine Lives backs up your desktop.</string>
+    <key>NSDownloadsFolderUsageDescription</key>
+    <string>Nine Lives backs up your downloads.</string>
+</dict>
+</plist>
