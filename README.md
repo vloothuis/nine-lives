@@ -33,7 +33,7 @@ Your backups are always encrypted before they leave your Mac. Nine Lives shows y
 
 1. Download the `.dmg` for your Mac from the [latest release](https://github.com/vloothuis/nine-lives/releases/latest). Pick `arm64` for Apple silicon (M1 and later) or `x86_64` for Intel.
 2. Open it and drag **Nine Lives** to **Applications**.
-3. The app is not notarized yet, so macOS warns the first time. Right-click the app, choose **Open**, then **Open** again. If macOS still refuses, run `xattr -dr com.apple.quarantine "/Applications/Nine Lives.app"` in Terminal.
+3. The app is not notarized yet, so macOS blocks it the first time. Open it once, then go to System Settings, Privacy & Security, scroll down, click **Open Anyway** and confirm. Or run `xattr -dr com.apple.quarantine "/Applications/Nine Lives.app"` in Terminal.
 4. For a complete backup, give Nine Lives **Full Disk Access** in System Settings, Privacy & Security.
 
 Versions are dates, for example `2026.11.22`. **Nine Lives, About** shows the version and build.
