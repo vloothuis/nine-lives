@@ -1,12 +1,12 @@
 import SwiftUI
-import BorgKit
+import ResticKit
 import NineLivesCore
 
 struct SettingsView: View {
     @Environment(BackupCoordinator.self) private var c
     @State private var launchAtLogin = LaunchAtLogin.isEnabled
     @State private var loginError: String?
-    @State private var borgVersion = ""
+    @State private var engineVersion = ""
 
     private func binding<T>(_ kp: WritableKeyPath<BackupSettings, T>) -> Binding<T> {
         Binding(get: { c.state.settings[keyPath: kp] }, set: { v in c.updateSettings { $0[keyPath: kp] = v } })
@@ -91,32 +91,32 @@ struct SettingsView: View {
             }
 
             Section("Advanced") {
-                LabeledContent("Backup engine", value: c.borgAvailable ? borgVersion : "Not found")
+                LabeledContent("Backup engine", value: c.engineAvailable ? engineVersion : "Not found")
                 HStack {
-                    Text(c.state.settings.borgPathOverride ?? "Using the built-in borg").foregroundStyle(.secondary).lineLimit(1)
+                    Text(c.state.settings.enginePathOverride ?? "Using the built-in restic").foregroundStyle(.secondary).lineLimit(1)
                     Spacer()
-                    Button("Choose borg…") {
+                    Button("Choose restic…") {
                         let panel = NSOpenPanel()
                         panel.canChooseFiles = true
                         panel.canChooseDirectories = false
-                        if panel.runModal() == .OK, let u = panel.url { c.updateSettings { $0.borgPathOverride = u.path } }
+                        if panel.runModal() == .OK, let u = panel.url { c.updateSettings { $0.enginePathOverride = u.path } }
                     }
-                    if c.state.settings.borgPathOverride != nil {
-                        Button("Reset") { c.updateSettings { $0.borgPathOverride = nil } }
+                    if c.state.settings.enginePathOverride != nil {
+                        Button("Reset") { c.updateSettings { $0.enginePathOverride = nil } }
                     }
                 }
                 Button("Show Data Folder in Finder") { revealInFinder(StateStore.defaultDirectory) }
             }
 
             Section("About") {
-                Text("Nine Lives is open source software under the BSD 3-Clause license. Backups are stored with BorgBackup, so you can always restore without this app.")
+                Text("Nine Lives is open source software under the BSD 3-Clause license. Backups are stored with restic, so you can always restore without this app.")
                     .font(.callout).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
         .navigationTitle("Settings")
-        .task(id: c.state.settings.borgPathOverride) {
-            borgVersion = (try? await c.engine?.borg.version()) ?? ""
+        .task(id: c.state.settings.enginePathOverride) {
+            engineVersion = (try? await c.engine?.restic.version()) ?? ""
         }
     }
 

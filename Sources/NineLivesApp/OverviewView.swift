@@ -64,7 +64,7 @@ struct OverviewView: View {
                     Button("Stop") { c.cancelCurrent() }
                 }
                 if let f = info.fraction { ProgressView(value: f) } else { ProgressView().progressViewStyle(.linear) }
-                Text("\(info.files.formatted()) files · \(Fmt.bytes(info.bytes)) checked · \(Fmt.bytes(info.sentBytes)) sent")
+                Text("\(info.files.formatted()) files · \(Fmt.bytes(info.bytes)) checked" + (info.sentBytes > 0 ? " · \(Fmt.bytes(info.sentBytes)) sent" : ""))
                     .font(.callout).foregroundStyle(.secondary)
                 Text(info.currentPath).font(.caption).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
             }
@@ -92,7 +92,7 @@ struct OverviewView: View {
                         Spacer()
                         if c.isConnected(disk) {
                             Button("Back Up Now") { c.startBackup(diskID: disk.id, trigger: .manual) }
-                                .disabled(!c.activity.isIdle || !c.borgAvailable)
+                                .disabled(!c.activity.isIdle || !c.engineAvailable)
                         } else if c.monitor.loaded {
                             Label(disk.offlineText, systemImage: disk.isRemote ? "wifi.slash" : "cable.connector.slash").font(.callout).foregroundStyle(.secondary)
                         }

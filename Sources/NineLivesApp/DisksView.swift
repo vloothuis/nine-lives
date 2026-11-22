@@ -57,7 +57,7 @@ struct DisksView: View {
                     Spacer()
                     if connected {
                         Button("Back Up Now") { c.startBackup(diskID: disk.id, trigger: .manual) }
-                            .disabled(!c.activity.isIdle || !c.borgAvailable)
+                            .disabled(!c.activity.isIdle || !c.engineAvailable)
                     }
                 }
                 Divider()

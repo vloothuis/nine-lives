@@ -1,5 +1,5 @@
 import Foundation
-import BorgKit
+import ResticKit
 
 public struct CatalogEntry: Identifiable, Hashable, Sendable {
     public var id: String { path }
@@ -38,9 +38,9 @@ public final class Catalog: @unchecked Sendable {
         return s.step() && s.text(0) == "1"
     }
 
-    /// Reads the whole archive listing from borg into a new catalog file.
+    /// Reads the whole snapshot listing from restic into a new catalog file.
     public static func build(
-        borg: Borg, repo: BorgRepo, archive: String, at url: URL,
+        restic: Restic, repo: ResticRepo, snapshot: String, at url: URL,
         progress: @escaping @Sendable (Int) -> Void
     ) async throws -> Catalog {
         let fm = FileManager.default
@@ -49,7 +49,7 @@ public final class Catalog: @unchecked Sendable {
         try? fm.removeItem(at: partial)
         let writer = try CatalogWriter(path: partial.path)
         do {
-            try await borg.listItems(repo: repo, archive: archive) { item in
+            try await restic.listItems(repo: repo, snapshot: snapshot) { item in
                 writer.add(item)
                 progress(writer.count)
             }
@@ -147,7 +147,7 @@ final class CatalogWriter: @unchecked Sendable {
         return (String(path[..<slash]), String(path[path.index(after: slash)...]))
     }
 
-    /// Borg only stores the sources, so parent folders such as `Users` need to be added.
+    /// Listings may skip parent folders such as `Users`, so add them.
     private func ensureAncestors(of path: String) {
         var chain: [String] = []
         var current = Self.split(path).0
@@ -198,11 +198,11 @@ public final class CatalogStore: @unchecked Sendable {
     }
 
     public func catalog(
-        for archive: ArchiveInfo, borg: Borg, repo: BorgRepo,
+        for archive: ArchiveInfo, restic: Restic, repo: ResticRepo,
         progress: @escaping @Sendable (Int) -> Void
     ) async throws -> Catalog {
         if let c = cached(archiveID: archive.id) { return c }
-        let c = try await Catalog.build(borg: borg, repo: repo, archive: archive.name, at: url(forArchiveID: archive.id), progress: progress)
+        let c = try await Catalog.build(restic: restic, repo: repo, snapshot: archive.id, at: url(forArchiveID: archive.id), progress: progress)
         trim(keep: 6)
         return c
     }

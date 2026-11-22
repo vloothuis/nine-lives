@@ -43,7 +43,9 @@ public final class StateStore: @unchecked Sendable {
         }
     }
 
-    public var borgBaseDirectory: URL { directory.appendingPathComponent("Borg", isDirectory: true) }
+    public var cacheDirectory: URL { directory.appendingPathComponent("Restic", isDirectory: true) }
+    /// Working files of the borg versions. Removed on start.
+    public var legacyBorgDirectory: URL { directory.appendingPathComponent("Borg", isDirectory: true) }
     public var sshDirectory: URL { directory.appendingPathComponent("SSH", isDirectory: true) }
     public var catalogDirectory: URL { directory.appendingPathComponent("Catalogs", isDirectory: true) }
 }

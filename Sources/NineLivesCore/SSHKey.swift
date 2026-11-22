@@ -1,5 +1,5 @@
 import Foundation
-import BorgKit
+import ResticKit
 
 /// The SSH key that Nine Lives uses to reach backup servers. It has no passphrase,
 /// so scheduled backups work unattended. It is only valid for the servers where the user installed it.

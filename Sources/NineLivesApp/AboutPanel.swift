@@ -15,7 +15,7 @@ enum AboutPanel {
 
     static func show() {
         let credits = NSMutableAttributedString(
-            string: "Simple backups to USB disks and servers, built on BorgBackup.\n",
+            string: "Simple backups to USB disks and servers, built on restic.\n",
             attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.labelColor])
         credits.append(NSAttributedString(
             string: "github.com/vloothuis/nine-lives",

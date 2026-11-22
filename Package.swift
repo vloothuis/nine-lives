@@ -8,10 +8,10 @@ let package = Package(
         .executable(name: "NineLives", targets: ["NineLivesApp"]),
     ],
     targets: [
-        .target(name: "BorgKit"),
+        .target(name: "ResticKit"),
         .target(
             name: "NineLivesCore",
-            dependencies: ["BorgKit"],
+            dependencies: ["ResticKit"],
             linkerSettings: [
                 .linkedFramework("DiskArbitration"),
                 .linkedFramework("IOKit"),
@@ -19,8 +19,8 @@ let package = Package(
             ]
         ),
         .executableTarget(name: "NineLivesApp", dependencies: ["NineLivesCore"]),
-        .testTarget(name: "BorgKitTests", dependencies: ["BorgKit"]),
-        .testTarget(name: "NineLivesCoreTests", dependencies: ["NineLivesCore", "BorgKit"]),
+        .testTarget(name: "ResticKitTests", dependencies: ["ResticKit"]),
+        .testTarget(name: "NineLivesCoreTests", dependencies: ["NineLivesCore", "ResticKit"]),
     ],
     swiftLanguageModes: [.v5]
 )

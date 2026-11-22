@@ -1,8 +1,8 @@
 import Foundation
-import BorgKit
+import ResticKit
 
 public enum EngineError: LocalizedError, Equatable {
-    case borgMissing
+    case engineMissing
     case diskNotConnected(String)
     case diskReadOnly(String)
     case diskFull(String)
@@ -15,13 +15,11 @@ public enum EngineError: LocalizedError, Equatable {
     case serverUnreachable(String)
     case serverRejectedKey(String)
     case hostKeyChanged(String)
-    case borgMissingOnServer(String)
     case repositoryChanged(String)
-    case notEncrypted(String)
 
     public var errorDescription: String? {
         switch self {
-        case .borgMissing: return "The backup engine (borg) was not found."
+        case .engineMissing: return "The backup engine (restic) was not found."
         case .diskNotConnected(let n): return "\(n) is not connected."
         case .diskReadOnly(let n): return "\(n) is read-only, so nothing can be saved on it."
         case .diskFull(let n): return "\(n) is almost full. Free up space on the disk or use a larger disk."
@@ -40,10 +38,6 @@ public enum EngineError: LocalizedError, Equatable {
             return "The identity of \(n) changed. This can mean the server was reinstalled, or that someone is intercepting the connection. Backups to it are paused."
         case .repositoryChanged(let n):
             return "The backup folder on \(n) is not the one Nine Lives made, or it was changed. Nothing was backed up. If you replaced it on purpose, remove \(n) in Disks and add it again."
-        case .notEncrypted(let n):
-            return "The backup folder on \(n) is not encrypted. Nine Lives only uses encrypted backups on servers."
-        case .borgMissingOnServer(let n):
-            return "borg is not installed on \(n), or it is not on the server's default path. Install borg there or set its location."
         }
     }
 }
@@ -56,7 +50,7 @@ public enum ServerProbe: Equatable, Sendable {
     case rejectedKey
     case hostKeyChanged
     case unreachable(String)
-    case borgMissing
+    case sftpMissing
     case failed(String, details: String?)
 }
 
@@ -72,6 +66,14 @@ public struct BackupRunResult: Sendable {
     public var storedSize: Int64?
     public var repositoryID: String?
     public var maintenanceWarnings: [String]
+    /// The disk after the run. Differs from the input when a switch from borg was completed.
+    public var disk: KnownDisk
+}
+
+public struct MigrationResult: Sendable {
+    public var disk: KnownDisk
+    /// Set when the old backups had to be removed before the new ones could be made.
+    public var warning: String?
 }
 
 public enum RestoreTarget: Sendable {
@@ -83,15 +85,17 @@ public enum RestoreTarget: Sendable {
 
 /// Runs the backup, verification and restore workflows for one disk. Holds no mutable state.
 public final class BackupEngine: Sendable {
-    public let borg: Borg
+    public let restic: Restic
     public let secrets: SecretStore
     public let catalogs: CatalogStore
 
-    public static let archivePrefix = "ninelives-"
+    public static let tag = "ninelives"
     static let minimumFreeSpace: Int64 = 200_000_000
+    /// Suffix of the folder that holds the new backups while the old borg backups still exist.
+    static let migrationSuffix = "-restic"
 
-    public init(borg: Borg, secrets: SecretStore, catalogs: CatalogStore) {
-        self.borg = borg
+    public init(restic: Restic, secrets: SecretStore, catalogs: CatalogStore) {
+        self.restic = restic
         self.secrets = secrets
         self.catalogs = catalogs
     }
@@ -102,20 +106,80 @@ public final class BackupEngine: Sendable {
         volume.url.appendingPathComponent(folder, isDirectory: true)
     }
 
-    public func repo(for disk: KnownDisk, on volume: VolumeInfo?) throws -> BorgRepo {
+    /// On encrypted disks the repository password is kept in this file next to the backups,
+    /// so the backups can be opened with the disk's own password alone.
+    func passwordFile(folder: String, on volume: VolumeInfo) -> URL {
+        let url = repositoryURL(folder: folder, on: volume)
+        return url.deletingLastPathComponent().appendingPathComponent("\(url.lastPathComponent) password.txt")
+    }
+
+    private func readPasswordFile(folder: String, on volume: VolumeInfo) -> String? {
+        (try? String(contentsOf: passwordFile(folder: folder, on: volume), encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func password(for disk: KnownDisk, on volume: VolumeInfo?) -> String? {
+        if let p = secrets.passphrase(for: disk.id) { return p }
+        guard disk.mode == .authenticated, let volume else { return nil }
+        return readPasswordFile(folder: disk.legacyFolder ?? disk.repoFolder, on: volume)
+    }
+
+    public func repo(for disk: KnownDisk, on volume: VolumeInfo?) throws -> ResticRepo {
         if let server = disk.remote {
-            guard let p = secrets.passphrase(for: disk.id) else { throw EngineError.missingPassphrase(disk.name) }
-            return BorgRepo(remote: server.location, remotePath: server.borgPath, passphrase: p)
+            guard let p = password(for: disk, on: nil) else { throw EngineError.missingPassphrase(disk.name) }
+            return ResticRepo(remote: server.location, password: p)
         }
         guard let volume else { throw EngineError.diskNotConnected(disk.name) }
-        let url = repositoryURL(folder: disk.repoFolder, on: volume)
-        switch disk.mode {
-        case .authenticated:
-            return BorgRepo(url: url, passphrase: "")
-        case .repokey:
-            guard let p = secrets.passphrase(for: disk.id) else { throw EngineError.missingPassphrase(disk.name) }
-            return BorgRepo(url: url, passphrase: p)
+        guard let p = password(for: disk, on: volume) else { throw EngineError.missingPassphrase(disk.name) }
+        return ResticRepo(url: repositoryURL(folder: disk.repoFolder, on: volume), password: p)
+    }
+
+    // MARK: - Old borg repositories
+
+    /// True when a folder holds a borg repository. Its `config` is a plain INI file, unlike restic's.
+    static func isBorgRepository(at url: URL) -> Bool {
+        guard let text = try? String(contentsOf: url.appendingPathComponent("config"), encoding: .utf8) else { return false }
+        return text.contains("[repository]")
+    }
+
+    private func isBorgRepository(_ remote: SFTPLocation) async -> Bool {
+        let config = Restic.shellQuote(remote.path + "/config")
+        return (try? await restic.runRemote(remote, "grep -qs '^\\[repository\\]' \(config) && echo yes"))?
+            .contains("yes") ?? false
+    }
+
+    private func removeBorgRepository(at url: URL) throws {
+        guard Self.isBorgRepository(at: url) else { return }
+        try FileManager.default.removeItem(at: url)
+    }
+
+    private func removeBorgRepository(_ remote: SFTPLocation) async throws {
+        guard await isBorgRepository(remote) else { return }
+        try await restic.runRemote(remote, "rm -rf -- \(Restic.shellQuote(remote.path))")
+    }
+
+    static func directorySize(_ url: URL) -> Int64 {
+        guard let e = FileManager.default.enumerator(at: url, includingPropertiesForKeys: [.totalFileAllocatedSizeKey]) else { return 0 }
+        var total: Int64 = 0
+        for case let f as URL in e {
+            total += Int64((try? f.resourceValues(forKeys: [.totalFileAllocatedSizeKey]).totalFileAllocatedSize) ?? 0)
         }
+        return total
+    }
+
+    /// Size of a folder on the server and the free space next to it, in bytes.
+    private func remoteSpace(_ remote: SFTPLocation) async throws -> (used: Int64, free: Int64) {
+        let p = Restic.shellQuote(remote.path)
+        let out = try await restic.runRemote(remote, "du -sk -- \(p) | cut -f1; df -Pk -- \(p) | tail -1")
+        let lines = out.split(separator: "\n")
+        guard lines.count >= 2, let used = Int64(lines[0].trimmingCharacters(in: .whitespaces)) else {
+            throw ResticError(exitCode: 1, rawMessages: ["Could not read the free space on the server: \(out)"])
+        }
+        let columns = lines[1].split(separator: " ", omittingEmptySubsequences: true)
+        guard columns.count >= 4, let free = Int64(columns[3]) else {
+            throw ResticError(exitCode: 1, rawMessages: ["Could not read the free space on the server: \(out)"])
+        }
+        return (used * 1024, free * 1024)
     }
 
     // MARK: - Setting up disks
@@ -128,17 +192,29 @@ public final class BackupEngine: Sendable {
     }
 
     public func probeExisting(on volume: VolumeInfo) async -> ExistingRepository {
-        let url = repositoryURL(folder: Self.defaultFolder, on: volume)
-        guard borg.repositoryExists(at: url) else { return .none }
+        let folder = Self.defaultFolder
+        let url = repositoryURL(folder: folder, on: volume)
+        // Old borg backups are replaced when the disk is set up again.
+        guard restic.repositoryExists(at: url) else { return .none }
         do {
-            let pass = secrets.passphrase(for: volume.id) ?? ""
-            _ = try await borg.info(repo: BorgRepo(url: url, passphrase: pass))
+            guard let pass = secrets.passphrase(for: volume.id) ?? readPasswordFile(folder: folder, on: volume) else {
+                return .needsPassphrase
+            }
+            _ = try await restic.repositoryID(repo: ResticRepo(url: url, password: pass))
             return .openable
-        } catch let e as BorgError {
+        } catch let e as ResticError {
             return e.isWrongPassphrase ? .needsPassphrase : .unreadable(e.localizedDescription)
         } catch {
             return .unreadable(error.localizedDescription)
         }
+    }
+
+    /// Stores a new password for a disk. On encrypted disks it is also written next to the backups.
+    private func storeGeneratedPassword(_ pass: String, diskID: String, folder: String, on volume: VolumeInfo) throws {
+        try secrets.setPassphrase(pass, for: diskID)
+        let file = passwordFile(folder: folder, on: volume)
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try (pass + "\n").write(to: file, atomically: true, encoding: .utf8)
     }
 
     /// Creates a new repository on the disk. `passphrase` is required when the disk itself is not encrypted.
@@ -147,18 +223,22 @@ public final class BackupEngine: Sendable {
         let mode: EncryptionMode = volume.isEncrypted ? .authenticated : .repokey
         let folder = Self.defaultFolder
         let url = repositoryURL(folder: folder, on: volume)
-        var pass = ""
+        let pass: String
         if mode == .repokey {
             guard let passphrase, !passphrase.isEmpty else { throw EngineError.missingPassphrase(volume.name) }
             pass = passphrase
             try secrets.setPassphrase(passphrase, for: volume.id)
+        } else {
+            pass = PassphraseGenerator.generate()
+            try storeGeneratedPassword(pass, diskID: volume.id, folder: folder, on: volume)
         }
-        try await borg.initRepository(BorgRepo(url: url, passphrase: pass), mode: mode)
+        try removeBorgRepository(at: url)
+        let id = try await restic.initRepository(ResticRepo(url: url, password: pass))
         writeReadme(near: url, mode: mode)
         var disk = KnownDisk(
             id: volume.id, name: volume.name, mode: mode, diskEncrypted: volume.isEncrypted,
             repoFolder: folder, capacity: volume.totalCapacity)
-        disk.repositoryID = try? await borg.info(repo: BorgRepo(url: url, passphrase: pass)).id
+        disk.repositoryID = id.isEmpty ? nil : id
         return disk
     }
 
@@ -166,20 +246,18 @@ public final class BackupEngine: Sendable {
     public func adoptDisk(on volume: VolumeInfo, passphrase: String?) async throws -> KnownDisk {
         let folder = Self.defaultFolder
         let url = repositoryURL(folder: folder, on: volume)
-        let pass = passphrase ?? secrets.passphrase(for: volume.id) ?? ""
-        let info = try await borg.info(repo: BorgRepo(url: url, passphrase: pass))
-        guard let mode = EncryptionMode(rawValue: info.encryption),
-              mode == .repokey || volume.isEncrypted
-        else { throw EngineError.notEncrypted(volume.name) }
-        if mode == .repokey { try secrets.setPassphrase(pass, for: volume.id) }
+        let filePass = readPasswordFile(folder: folder, on: volume)
+        let pass = passphrase ?? secrets.passphrase(for: volume.id) ?? filePass ?? ""
+        let repo = ResticRepo(url: url, password: pass)
+        let id = try await restic.repositoryID(repo: repo)
+        let mode: EncryptionMode = volume.isEncrypted && pass == filePass ? .authenticated : .repokey
+        try secrets.setPassphrase(pass, for: volume.id)
         var disk = KnownDisk(
             id: volume.id, name: volume.name, mode: mode, diskEncrypted: volume.isEncrypted,
             repoFolder: folder, capacity: volume.totalCapacity)
-        disk.storedSize = info.storedSize
-        disk.repositoryID = info.id
-        if let latest = try? await borg.listArchives(repo: BorgRepo(url: url, passphrase: pass), glob: Self.archivePrefix + "*").first {
-            disk.lastBackup = latest.date
-        }
+        disk.repositoryID = id
+        disk.storedSize = try? await restic.storedSize(repo: repo)
+        disk.lastBackup = try? await restic.listArchives(repo: repo, tag: Self.tag).first?.date
         return disk
     }
 
@@ -187,26 +265,23 @@ public final class BackupEngine: Sendable {
 
     /// Looks at the server and the chosen path without changing anything.
     public func probeServer(_ server: RemoteServer, passphrase: String = "") async -> ServerProbe {
-        switch await borg.checkSSH(host: server.host, port: server.port, user: server.user) {
+        switch await restic.checkSSH(host: server.host, port: server.port, user: server.user) {
         case .ok: break
         case .rejectedKey: return .rejectedKey
         case .hostKeyChanged: return .hostKeyChanged
         case .unreachable(let m): return .unreachable(m)
         }
-        let repo = BorgRepo(remote: server.location, remotePath: server.borgPath, passphrase: passphrase)
+        // Old borg backups at this path are replaced by a new backup folder.
+        if await isBorgRepository(server.location) { return .noRepository }
         do {
-            let info = try await borg.info(repo: repo)
-            if !(info.encryption.hasPrefix("repokey") || info.encryption.hasPrefix("keyfile")) {
-                return .failed(EngineError.notEncrypted(server.host).localizedDescription, details: nil)
-            }
+            _ = try await restic.repositoryID(repo: ResticRepo(remote: server.location, password: passphrase))
             return .openable
         } catch is CancellationError {
             return .failed("Cancelled", details: nil)
-        } catch let e as BorgError {
+        } catch let e as ResticError {
             if e.isRepositoryMissing { return .noRepository }
             if e.isWrongPassphrase { return .needsPassphrase }
-            // ssh itself worked, so a closed connection means borg is missing or broken on the server.
-            if e.isBorgMissingOnServer || (e.msgid ?? "").contains("ConnectionClosed") { return .borgMissing }
+            if e.isSFTPMissing { return .sftpMissing }
             if e.isConnectionProblem { return .unreachable(e.localizedDescription) }
             return .failed(e.summary, details: e.details)
         } catch {
@@ -218,71 +293,161 @@ public final class BackupEngine: Sendable {
     public func createServer(_ server: RemoteServer, passphrase: String) async throws -> KnownDisk {
         guard !passphrase.isEmpty else { throw EngineError.missingPassphrase(server.host) }
         var disk = KnownDisk(server: server)
-        try await borg.makeRemoteDirectory(host: server.host, port: server.port, user: server.user, path: server.path)
-        try await borg.initRepository(
-            BorgRepo(remote: server.location, remotePath: server.borgPath, passphrase: passphrase), mode: .repokey)
+        try await removeBorgRepository(server.location)
+        try await restic.makeRemoteDirectory(server.location)
+        let id = try await restic.initRepository(ResticRepo(remote: server.location, password: passphrase))
         try secrets.setPassphrase(passphrase, for: disk.id)
-        disk.repositoryID = try? await borg.info(
-            repo: BorgRepo(remote: server.location, remotePath: server.borgPath, passphrase: passphrase)).id
+        disk.repositoryID = id.isEmpty ? nil : id
         disk.addedAt = Date()
         return disk
     }
 
     /// Connects to a repository that already exists on the server.
     public func adoptServer(_ server: RemoteServer, passphrase: String) async throws -> KnownDisk {
-        let repo = BorgRepo(remote: server.location, remotePath: server.borgPath, passphrase: passphrase)
         guard !passphrase.isEmpty else { throw EngineError.missingPassphrase(server.host) }
-        let info = try await borg.info(repo: repo)
-        guard info.encryption.hasPrefix("repokey") || info.encryption.hasPrefix("keyfile") else {
-            throw EngineError.notEncrypted(server.host)
-        }
+        let repo = ResticRepo(remote: server.location, password: passphrase)
         var disk = KnownDisk(server: server)
-        disk.repositoryID = info.id
-        disk.storedSize = info.storedSize
-        if let latest = try? await borg.listArchives(repo: repo, glob: Self.archivePrefix + "*").first {
-            disk.lastBackup = latest.date
-        }
+        disk.repositoryID = try await restic.repositoryID(repo: repo)
+        disk.storedSize = try? await restic.storedSize(repo: repo)
+        disk.lastBackup = try? await restic.listArchives(repo: repo, tag: Self.tag).first?.date
         try secrets.setPassphrase(passphrase, for: disk.id)
         return disk
     }
 
     private func writeReadme(near repoURL: URL, mode: EncryptionMode) {
         let readme = repoURL.deletingLastPathComponent().appendingPathComponent("HOW TO RESTORE.txt")
-        let passphraseLine = mode == .repokey
-            ? "This backup is encrypted. You need the recovery passphrase that Nine Lives showed you when you set up this disk."
-            : "The disk itself is encrypted. Unlock the disk with its password, no extra passphrase is needed."
+        let passwordLine = mode == .repokey
+            ? "This backup is encrypted. The password is the recovery passphrase that Nine Lives showed you when you set up this disk."
+            : "The password is in the file \"\(repoURL.lastPathComponent) password.txt\" next to the backup folder. The disk itself is encrypted."
         let text = """
         Nine Lives backups
         ==================
 
         This folder contains backups made by Nine Lives. The data is stored
-        with BorgBackup (https://www.borgbackup.org), an open format. You can restore without Nine Lives:
+        with restic (https://restic.net), an open format. You can restore without Nine Lives:
 
-          1. Install borg (for example: brew install borgbackup).
-          2. \(passphraseLine)
-          3. List backups:    borg list "\(repoURL.path)"
-          4. Restore a backup: cd /some/empty/folder && borg extract "\(repoURL.path)::ARCHIVE-NAME"
+          1. Install restic (for example: brew install restic).
+          2. \(passwordLine)
+          3. List backups:     restic -r "\(repoURL.path)" snapshots
+          4. Restore a backup: restic -r "\(repoURL.path)" restore SNAPSHOT-ID --target /some/empty/folder
 
         Do not edit or delete files inside the backup folders by hand.
         """
         try? text.write(to: readme, atomically: true, encoding: .utf8)
     }
 
-    // MARK: - Backup
+    // MARK: - Switching from borg
 
-    static func archiveName(date: Date = Date()) -> String {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.dateFormat = "yyyy-MM-dd'T'HH-mm-ss"
-        return archivePrefix + f.string(from: date)
+    /// Replaces the borg repository of a disk or server with a restic repository and keeps the passphrase.
+    ///
+    /// When there is room, the new repository is made next to the old one, which is removed after the
+    /// first successful backup. Otherwise the old backups are removed first.
+    public func migrate(disk: KnownDisk, on volume: VolumeInfo?) async throws -> MigrationResult {
+        guard disk.needsMigration else { return MigrationResult(disk: disk) }
+        try await ensureReachable(disk)
+        var d = disk
+        let pass: String
+        if disk.mode == .repokey || disk.isRemote {
+            guard let p = secrets.passphrase(for: disk.id) else { throw EngineError.missingPassphrase(disk.name) }
+            pass = p
+        } else {
+            guard let volume else { throw EngineError.diskNotConnected(disk.name) }
+            pass = readPasswordFile(folder: disk.repoFolder, on: volume) ?? PassphraseGenerator.generate()
+            try storeGeneratedPassword(pass, diskID: disk.id, folder: disk.repoFolder, on: volume)
+        }
+        var warning: String?
+        let tooSmall = "There was not enough free space on \(disk.name) to keep the old backups while making the new ones, so the old backups were removed. The new backup starts from scratch."
+
+        if let server = disk.remote {
+            let old = server.location
+            if await isBorgRepository(old) {
+                let space = try await remoteSpace(old)
+                if space.free >= space.used + Self.minimumFreeSpace {
+                    var next = server
+                    next.path = server.path + Self.migrationSuffix
+                    try await restic.makeRemoteDirectory(next.location)
+                    d.repositoryID = try await initOrOpen(ResticRepo(remote: next.location, password: pass))
+                    d.remote = next
+                    d.legacyFolder = server.path
+                } else {
+                    try await removeBorgRepository(old)
+                    warning = tooSmall
+                }
+            }
+            if d.legacyFolder == nil {
+                try await restic.makeRemoteDirectory(old)
+                d.repositoryID = try await initOrOpen(ResticRepo(remote: old, password: pass))
+            }
+        } else {
+            guard let volume else { throw EngineError.diskNotConnected(disk.name) }
+            let oldURL = repositoryURL(folder: disk.repoFolder, on: volume)
+            if Self.isBorgRepository(at: oldURL) {
+                let used = Self.directorySize(oldURL)
+                if volume.availableCapacity >= used + Self.minimumFreeSpace {
+                    let folder = disk.repoFolder + Self.migrationSuffix
+                    d.repositoryID = try await initOrOpen(ResticRepo(url: repositoryURL(folder: folder, on: volume), password: pass))
+                    d.repoFolder = folder
+                    d.legacyFolder = disk.repoFolder
+                } else {
+                    try removeBorgRepository(at: oldURL)
+                    warning = tooSmall
+                }
+            }
+            if d.legacyFolder == nil {
+                d.repositoryID = try await initOrOpen(ResticRepo(url: oldURL, password: pass))
+            }
+            writeReadme(near: oldURL, mode: disk.mode)
+        }
+        d.format = .restic
+        d.storedSize = nil
+        d.lastBackupStats = nil
+        d.lastVerification = nil
+        return MigrationResult(disk: d, warning: warning)
     }
 
-    private func recovering<T>(_ repo: BorgRepo, _ op: () async throws -> T) async throws -> T {
+    /// Creates the repository, or opens it when an earlier, interrupted switch already made it.
+    private func initOrOpen(_ repo: ResticRepo) async throws -> String {
+        let exists = repo.isRemote
+            ? (try? await restic.repositoryID(repo: repo)) != nil
+            : restic.repositoryExists(at: repo.url)
+        if exists { return try await restic.repositoryID(repo: repo) }
+        return try await restic.initRepository(repo)
+    }
+
+    /// Removes the old borg backups and moves the new backups to the original folder.
+    private func finishMigration(disk: KnownDisk, on volume: VolumeInfo?) async throws -> KnownDisk {
+        guard let legacy = disk.legacyFolder else { return disk }
+        var d = disk
+        if var server = disk.remote {
+            var old = server
+            old.path = legacy
+            try await removeBorgRepository(old.location)
+            try await restic.runRemote(server.location,
+                "test ! -e \(Restic.shellQuote(legacy)) && mv -- \(Restic.shellQuote(server.path)) \(Restic.shellQuote(legacy))")
+            server.path = legacy
+            d.remote = server
+        } else {
+            guard let volume else { return disk }
+            let oldURL = repositoryURL(folder: legacy, on: volume)
+            try removeBorgRepository(at: oldURL)
+            let fm = FileManager.default
+            if !fm.fileExists(atPath: oldURL.path) {
+                try fm.moveItem(at: repositoryURL(folder: disk.repoFolder, on: volume), to: oldURL)
+                d.repoFolder = legacy
+            }
+        }
+        d.legacyFolder = nil
+        return d
+    }
+
+    // MARK: - Backup
+
+    private func recovering<T>(_ repo: ResticRepo, _ op: () async throws -> T) async throws -> T {
         do {
             return try await op()
-        } catch let e as BorgError where e.isLockProblem {
+        } catch let e as ResticError where e.isLockProblem {
             // A previous run was killed. Only one job runs at a time, so the lock is stale.
-            try await borg.breakLock(repo: repo)
+            try await restic.unlock(repo: repo)
             return try await op()
         }
     }
@@ -290,7 +455,7 @@ public final class BackupEngine: Sendable {
     /// Fails with a clear error when a server cannot be reached.
     func ensureReachable(_ disk: KnownDisk) async throws {
         guard let s = disk.remote else { return }
-        switch await borg.checkSSH(host: s.host, port: s.port, user: s.user) {
+        switch await restic.checkSSH(host: s.host, port: s.port, user: s.user) {
         case .ok: return
         case .rejectedKey: throw EngineError.serverRejectedKey(disk.name)
         case .hostKeyChanged: throw EngineError.hostKeyChanged(disk.name)
@@ -298,13 +463,11 @@ public final class BackupEngine: Sendable {
         }
     }
 
-    /// Refuses to use a repository whose ID or encryption differs from what was recorded when the disk was added.
-    private func checkIdentity(disk: KnownDisk, repo: BorgRepo) async throws -> RepositoryInfo {
-        let info = try await borg.info(repo: repo)
-        if let known = disk.repositoryID, known != info.id { throw EngineError.repositoryChanged(disk.name) }
-        let expected = disk.isRemote ? "repokey" : (disk.mode == .repokey ? "repokey" : "authenticated")
-        if !info.encryption.hasPrefix(expected) { throw EngineError.repositoryChanged(disk.name) }
-        return info
+    /// Refuses to use a repository whose ID differs from what was recorded when the disk was added.
+    private func checkIdentity(disk: KnownDisk, repo: ResticRepo) async throws -> String {
+        let id = try await restic.repositoryID(repo: repo)
+        if let known = disk.repositoryID, known != id { throw EngineError.repositoryChanged(disk.name) }
+        return id
     }
 
     public func runBackup(
@@ -322,28 +485,37 @@ public final class BackupEngine: Sendable {
         try await ensureReachable(disk)
         let repo = try repo(for: disk, on: volume)
         if !repo.isRemote {
-            guard borg.repositoryExists(at: repo.url) else { throw EngineError.repositoryMissing(disk.name) }
+            guard restic.repositoryExists(at: repo.url) else { throw EngineError.repositoryMissing(disk.name) }
         }
 
-        let identity = try await checkIdentity(disk: disk, repo: repo)
+        let id = try await recovering(repo) { try await checkIdentity(disk: disk, repo: repo) }
 
-        let options = CreateOptions(sources: sources, excludePatterns: settings.excludePatterns())
-        let name = Self.archiveName()
+        let options = CreateOptions(
+            sources: sources, excludePatterns: settings.excludePatterns(), host: Machine.backupHost, tag: Self.tag)
         let created = try await recovering(repo) {
-            try await borg.create(repo: repo, archive: name, options: options, progress: progress)
+            try await restic.backup(repo: repo, options: options, progress: progress)
         }
 
         var warnings: [String] = []
         do {
-            try await borg.prune(repo: repo, retention: settings.retention, glob: Self.archivePrefix + "*")
-            try await borg.compact(repo: repo)
+            try await recovering(repo) {
+                try await restic.forget(repo: repo, retention: settings.retention, tag: Self.tag)
+            }
         } catch is CancellationError {
             throw CancellationError()
         } catch {
             warnings.append("Cleaning up old backups failed: \(error.localizedDescription)")
         }
-        let stored = try? await borg.info(repo: repo).storedSize
-        return BackupRunResult(create: created, storedSize: stored, repositoryID: identity.id, maintenanceWarnings: warnings)
+        var updated = disk
+        do {
+            updated = try await finishMigration(disk: disk, on: volume)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            warnings.append("Removing the old backups failed: \(error.localizedDescription). Nine Lives tries again after the next backup.")
+        }
+        let stored = try? await restic.storedSize(repo: try self.repo(for: updated, on: volume))
+        return BackupRunResult(create: created, storedSize: stored, repositoryID: id, maintenanceWarnings: warnings, disk: updated)
     }
 
     // MARK: - Browsing and restoring
@@ -351,7 +523,7 @@ public final class BackupEngine: Sendable {
     public func archives(disk: KnownDisk, on volume: VolumeInfo?) async throws -> [ArchiveInfo] {
         try await ensureReachable(disk)
         let repo = try repo(for: disk, on: volume)
-        return try await borg.listArchives(repo: repo, glob: Self.archivePrefix + "*")
+        return try await restic.listArchives(repo: repo, tag: Self.tag)
     }
 
     public func catalog(
@@ -360,7 +532,7 @@ public final class BackupEngine: Sendable {
     ) async throws -> Catalog {
         if let cached = catalogs.cached(archiveID: archive.id) { return cached }
         let repo = try repo(for: disk, on: volume)
-        return try await catalogs.catalog(for: archive, borg: borg, repo: repo, progress: progress)
+        return try await catalogs.catalog(for: archive, restic: restic, repo: repo, progress: progress)
     }
 
     @discardableResult
@@ -370,19 +542,29 @@ public final class BackupEngine: Sendable {
         let repo = try repo(for: disk, on: volume)
         switch target {
         case .originalLocation:
-            _ = try await borg.extract(
-                repo: repo, archive: archive.name, paths: entries.map(\.path), destination: URL(fileURLWithPath: "/"))
+            _ = try await restic.restore(
+                repo: repo, snapshot: archive.id, paths: entries.map(\.path), destination: URL(fileURLWithPath: "/"))
             return URL(fileURLWithPath: entries.first?.originalPath ?? "/")
         case .folder(let parent):
             let f = DateFormatter()
             f.locale = Locale(identifier: "en_US_POSIX")
             f.dateFormat = "yyyy-MM-dd HH.mm"
             let base = parent.appendingPathComponent("Restored from backup \(f.string(from: archive.date))", isDirectory: true)
+            let fm = FileManager.default
+            // restic keeps full paths, so restore into a hidden staging folder and move each item up.
+            let staging = base.appendingPathComponent(".nine-lives-restore-\(UUID().uuidString)", isDirectory: true)
+            defer { try? fm.removeItem(at: staging) }
+            _ = try await restic.restore(repo: repo, snapshot: archive.id, paths: entries.map(\.path), destination: staging)
             for entry in entries {
-                let depth = entry.path.split(separator: "/").count
-                _ = try await borg.extract(
-                    repo: repo, archive: archive.name, paths: [entry.path], destination: base,
-                    stripComponents: max(depth - 1, 0))
+                let source = staging.appendingPathComponent(entry.path)
+                guard fm.fileExists(atPath: source.path) else { continue }
+                var dest = base.appendingPathComponent(entry.name)
+                var n = 2
+                while fm.fileExists(atPath: dest.path) {
+                    dest = base.appendingPathComponent("\(entry.name) \(n)")
+                    n += 1
+                }
+                try fm.moveItem(at: source, to: dest)
             }
             return base
         }
@@ -400,11 +582,11 @@ public final class BackupEngine: Sendable {
         var problems: [String] = []
 
         status("Checking the backup folder…")
-        let check = try await recovering(repo) { try await borg.check(repo: repo, maxDuration: 600) }
+        let check = try await recovering(repo) { try await restic.check(repo: repo, readDataSubset: "1%") }
         if !check.passed { problems += check.messages.isEmpty ? ["The backup folder has errors."] : check.messages }
 
         status("Reading the newest backup…")
-        let archives = try await borg.listArchives(repo: repo, glob: Self.archivePrefix + "*")
+        let archives = try await restic.listArchives(repo: repo, tag: Self.tag)
         var restored = 0
         if let latest = archives.first {
             let catalog = try await catalog(for: latest, disk: disk, on: volume) { n in
@@ -415,7 +597,7 @@ public final class BackupEngine: Sendable {
                 status("Restoring \(sample.count) test files…")
                 let temp = FileManager.default.temporaryDirectory.appendingPathComponent("NineLives-verify-\(UUID().uuidString)")
                 defer { try? FileManager.default.removeItem(at: temp) }
-                _ = try await borg.extract(repo: repo, archive: latest.name, paths: sample.map(\.path), destination: temp)
+                _ = try await restic.restore(repo: repo, snapshot: latest.id, paths: sample.map(\.path), destination: temp)
                 for entry in sample {
                     let file = temp.appendingPathComponent(entry.path)
                     let size = (try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? Int64) ?? nil

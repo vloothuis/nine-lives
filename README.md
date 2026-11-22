@@ -23,11 +23,12 @@ Your backups are always encrypted before they leave your Mac. Nine Lives shows y
 
 - Starts a backup when a known USB disk is plugged in, then notifies you and can eject the disk.
 - Several rotating disks, each with its own backup.
-- Network backups over SSH to any server with borg (a NAS, a rented server, a backup service). Nine Lives creates its own SSH key and shows you what to install on the server.
+- Network backups over SSH to any server with SFTP (a NAS, a rented server, a backup service). Nine Lives creates its own SSH key and shows you what to install on the server.
 - Keeps hourly, daily, weekly and monthly backups, like Time Machine, and skips caches and other files you do not need.
 - Checks your backups every month by restoring real files from them.
 - Restore browser without extra software (no macFUSE).
-- Backups stay readable with plain `borg`. A `HOW TO RESTORE.txt` is written next to them.
+- Backups stay readable with plain `restic`. A `HOW TO RESTORE.txt` is written next to them.
+- Backups made with older versions (borg) are replaced automatically on the first backup. The recovery passphrase stays the same.
 
 ## Install
 
@@ -40,25 +41,25 @@ Versions are dates, for example `2026.11.22`. **Nine Lives, About** shows the ve
 
 ## Under the hood
 
-Nine Lives is a SwiftUI menu bar app on top of [BorgBackup](https://www.borgbackup.org) 1.4, which is bundled in the download. Disk backups use `authenticated-blake2` on encrypted disks and `repokey-blake2` with a passphrase kept in your Keychain on others. Server backups always use `repokey-blake2`.
+Nine Lives is a SwiftUI menu bar app on top of [restic](https://restic.net) 0.20, which is bundled in the download. restic always encrypts. On encrypted disks the repository password is generated and stored in your Keychain and in a file next to the backups. On other disks and on servers it is your recovery passphrase. Servers are reached over SFTP, so they need no extra software.
 
 ## Build from source
 
 ```bash
-swift test                 # needs borg installed (brew install borgbackup)
-scripts/fetch-borg.sh      # downloads and checksum-verifies the official borg binary
+swift test                 # needs restic installed (brew install restic)
+scripts/fetch-restic.sh    # downloads and checksum-verifies the official restic binary
 scripts/bundle.sh          # produces dist/Nine Lives.app
 ```
 
-Set `SIGN_IDENTITY="Developer ID Application: …"` for a hardened-runtime build. Without a bundled borg the app falls back to `/opt/homebrew/bin/borg`.
+Set `SIGN_IDENTITY="Developer ID Application: …"` for a hardened-runtime build. Without a bundled restic the app falls back to `/opt/homebrew/bin/restic`.
 
-- `Sources/BorgKit`: typed borg wrapper (process runner, JSON log parsing, commands).
+- `Sources/ResticKit`: typed restic wrapper (process runner, JSON log parsing, commands).
 - `Sources/NineLivesCore`: models, engine, scheduling policy, catalog, disk monitor, coordinator.
 - `Sources/NineLivesApp`: SwiftUI menu bar app and window.
 
 Releases are built by the **Release** GitHub Action (run it from the Actions tab). It builds both architectures and publishes DMGs with checksums.
 
-The bundled borg is a single-file build that starts slowly (3 to 5 seconds per call). Use `NINELIVES_BORG` to point at a faster install. The SSH lifecycle test runs only when `NINELIVES_TEST_SSH=port:authorized_keys_file` points at a local sshd.
+Use `NINELIVES_RESTIC` to point at another restic install. The SSH lifecycle test runs only when `NINELIVES_TEST_SSH=port:authorized_keys_file` points at a local sshd.
 
 ## Not done yet
 

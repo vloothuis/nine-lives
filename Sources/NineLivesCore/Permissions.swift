@@ -44,6 +44,11 @@ public enum Machine {
         return "\(clean)-\(short)"
     }
 
+    /// Host name recorded in backups. Stays the same when the Mac is renamed, so restic finds the previous backup.
+    public static var backupHost: String {
+        "mac-" + String(hardwareUUID.replacingOccurrences(of: "-", with: "").prefix(12)).lowercased()
+    }
+
     /// The Mac's name without the hardware suffix, for labels.
     public static var shortName: String { Host.current().localizedName ?? "Mac" }
 

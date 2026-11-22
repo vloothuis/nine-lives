@@ -31,7 +31,7 @@ jobs:
       ARCH: ${{ matrix.arch }}
     steps:
       - uses: actions/checkout@v4
-      - run: scripts/fetch-borg.sh
+      - run: scripts/fetch-restic.sh
       - run: scripts/bundle.sh
       - name: Make DMG
         run: |

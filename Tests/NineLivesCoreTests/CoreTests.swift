@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-import BorgKit
+import ResticKit
 @testable import NineLivesCore
 
 func tempDir() throws -> URL {
@@ -57,9 +57,9 @@ func tempDir() throws -> URL {
     @Test func patterns() {
         let s = BackupSettings(sources: ["/Users/me"])
         let p = s.excludePatterns(home: "/Users/me")
-        #expect(p.contains("pp:/Users/me/.Trash"))
-        #expect(p.contains("fm:*/node_modules"))
-        #expect(p.contains("pp:/Users/me/Library/Application Support/Nine Lives/Borg"))
+        #expect(p.contains("/Users/me/.Trash"))
+        #expect(p.contains("node_modules"))
+        #expect(p.contains("/Users/me/Library/Application Support/Nine Lives/Restic"))
     }
 
     @Test func disabledRulesAreSkipped() {
@@ -100,10 +100,10 @@ func fakeVolume(at url: URL, encrypted: Bool) -> VolumeInfo {
 
 @Suite struct EngineTests {
     func makeEngine(_ root: URL) throws -> (BackupEngine, MemorySecretStore) {
-        guard let bin = BorgBinary.locate(bundleResources: nil) else { throw CancellationError() }
+        guard let bin = ResticBinary.locate(bundleResources: nil) else { throw CancellationError() }
         let secrets = MemorySecretStore()
         let engine = BackupEngine(
-            borg: Borg(binary: bin, baseDirectory: root.appendingPathComponent("borg")),
+            restic: Restic(binary: bin, cacheDirectory: root.appendingPathComponent("cache")),
             secrets: secrets,
             catalogs: CatalogStore(directory: root.appendingPathComponent("catalogs")))
         return (engine, secrets)
@@ -126,6 +126,7 @@ func fakeVolume(at url: URL, encrypted: Bool) -> VolumeInfo {
         #expect(known.mode == .authenticated)
         #expect(await engine.probeExisting(on: volume) == .openable)
         #expect(FileManager.default.fileExists(atPath: disk.appendingPathComponent("Nine Lives Backups/HOW TO RESTORE.txt").path))
+        #expect(FileManager.default.fileExists(atPath: disk.appendingPathComponent("Nine Lives Backups/\(Machine.folderName) password.txt").path))
 
         var settings = BackupSettings(sources: [home.path])
         settings.rules = DefaultRules.all
@@ -188,12 +189,72 @@ func fakeVolume(at url: URL, encrypted: Bool) -> VolumeInfo {
         do {
             _ = try await engine.adoptDisk(on: volume, passphrase: "wrong")
             Issue.record("expected wrong passphrase")
-        } catch let e as BorgError {
+        } catch let e as ResticError {
             #expect(e.isWrongPassphrase)
         }
         let adopted = try await engine.adoptDisk(on: volume, passphrase: pass)
         #expect(adopted.mode == .repokey)
         #expect(secrets.passphrase(for: volume.id) == pass)
+    }
+
+    /// Writes a folder that looks like a borg repository.
+    func fakeBorgRepo(at url: URL, size: Int = 1000) throws {
+        try FileManager.default.createDirectory(at: url.appendingPathComponent("data"), withIntermediateDirectories: true)
+        try "[repository]\nversion = 1\n".write(to: url.appendingPathComponent("config"), atomically: true, encoding: .utf8)
+        try Data(count: size).write(to: url.appendingPathComponent("data/0"))
+    }
+
+    @Test func migratesBorgDiskNextToOldBackups() async throws {
+        let root = try tempDir()
+        let (engine, secrets) = try makeEngine(root)
+        let disk = root.appendingPathComponent("disk")
+        let home = root.appendingPathComponent("home")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        try "doc".write(to: home.appendingPathComponent("doc.txt"), atomically: true, encoding: .utf8)
+        let volume = fakeVolume(at: disk, encrypted: false)
+        try fakeBorgRepo(at: disk.appendingPathComponent("NL/mac"))
+        try secrets.setPassphrase("kept pass", for: volume.id)
+        var old = KnownDisk(id: volume.id, name: "Test Disk", mode: .repokey, diskEncrypted: false, repoFolder: "NL/mac")
+        old.format = nil
+        old.repositoryID = "borg-id"
+
+        let m = try await engine.migrate(disk: old, on: volume)
+        #expect(m.warning == nil)
+        #expect(m.disk.repoFolder == "NL/mac-restic")
+        #expect(m.disk.legacyFolder == "NL/mac")
+        #expect(!m.disk.needsMigration)
+        #expect(BackupEngine.isBorgRepository(at: disk.appendingPathComponent("NL/mac")))
+
+        let r = try await engine.runBackup(disk: m.disk, on: volume, settings: BackupSettings(sources: [home.path]), progress: { _ in })
+        #expect(r.disk.repoFolder == "NL/mac")
+        #expect(r.disk.legacyFolder == nil)
+        #expect(!BackupEngine.isBorgRepository(at: disk.appendingPathComponent("NL/mac")))
+        #expect(!FileManager.default.fileExists(atPath: disk.appendingPathComponent("NL/mac-restic").path))
+        // The passphrase is kept and opens the moved repository.
+        #expect(secrets.passphrase(for: volume.id) == "kept pass")
+        #expect(try await engine.archives(disk: r.disk, on: volume).count == 1)
+    }
+
+    @Test func migrationRemovesOldBackupsWhenSpaceIsShort() async throws {
+        let root = try tempDir()
+        let (engine, _) = try makeEngine(root)
+        let disk = root.appendingPathComponent("disk")
+        let home = root.appendingPathComponent("home")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        try "doc".write(to: home.appendingPathComponent("doc.txt"), atomically: true, encoding: .utf8)
+        var volume = fakeVolume(at: disk, encrypted: true)
+        volume.availableCapacity = 250_000_000
+        try fakeBorgRepo(at: disk.appendingPathComponent("NL/mac"), size: 100_000_000)
+        var old = KnownDisk(id: volume.id, name: "Test Disk", mode: .authenticated, diskEncrypted: true, repoFolder: "NL/mac")
+        old.format = .borg
+
+        let m = try await engine.migrate(disk: old, on: volume)
+        #expect(m.warning != nil)
+        #expect(m.disk.repoFolder == "NL/mac")
+        #expect(m.disk.legacyFolder == nil)
+        #expect(FileManager.default.fileExists(atPath: disk.appendingPathComponent("NL/mac password.txt").path))
+        let r = try await engine.runBackup(disk: m.disk, on: volume, settings: BackupSettings(sources: [home.path]), progress: { _ in })
+        #expect(r.create.stats.fileCount >= 1)
     }
 
     @Test func refusesReadOnlyAndFullDisks() async throws {
@@ -229,25 +290,22 @@ func fakeVolume(at url: URL, encrypted: Bool) -> VolumeInfo {
 }
 
 @Suite struct ServerTests {
-    @Test func serverTracebackIsSummarised() {
-        let e = BorgError(exitCode: 2, messages: ["Borg server: Platform: Linux pi4", "Borg server: Borg: 1.2.4 Python: CPython 3.11.2", "SSH_ORIGINAL_COMMAND: None"])
-        #expect(e.summary.count < 150)
-        #expect(!e.summary.contains("Platform"))
-        #expect(e.details?.contains("Linux pi4") == true)
-    }
-
-    @Test func locationFormatsHomeRelativeAndAbsolutePaths() {
-        #expect(RemoteServer(host: "nas.local", user: "me", path: "backups/mac").location == "ssh://me@nas.local:22/./backups/mac")
-        #expect(RemoteServer(host: "h", user: "u", port: 2222, path: "/srv/b").location == "ssh://u@h:2222/srv/b")
-        #expect(RemoteServer(host: "::1", user: "u", path: "x").location == "ssh://u@[::1]:22/./x")
-    }
-
     @Test func errorsAreClassified() {
-        #expect(BorgError(exitCode: 2, rawMessages: ["me@h: Permission denied (publickey)."]).isAuthenticationFailure)
-        #expect(BorgError(exitCode: 2, msgid: "ConnectionClosedWithHint").isConnectionProblem)
-        #expect(BorgError(exitCode: 2, rawMessages: ["ssh: Could not resolve hostname nas"]).isConnectionProblem)
-        #expect(BorgError(exitCode: 2, rawMessages: ["bash: borg: command not found"]).isBorgMissingOnServer)
-        #expect(!BorgError(exitCode: 2, msgid: "Repository.DoesNotExist").isConnectionProblem)
+        #expect(ResticError(exitCode: 1, rawMessages: ["me@h: Permission denied (publickey)."]).isAuthenticationFailure)
+        #expect(ResticError(exitCode: 1, rawMessages: ["ssh: Could not resolve hostname nas"]).isConnectionProblem)
+        #expect(ResticError(exitCode: 1, rawMessages: ["subsystem request failed on channel 0"]).isSFTPMissing)
+        #expect(ResticError(exitCode: 10, messages: ["Fatal: repository does not exist"]).isRepositoryMissing)
+        #expect(!ResticError(exitCode: 10).isConnectionProblem)
+    }
+
+    @Test func oldStateNeedsMigration() throws {
+        let json = #"{"disks":[{"id":"A","name":"D","mode":"repokey-blake2","diskEncrypted":false,"repoFolder":"x","addedAt":"2026-01-01T00:00:00Z","remote":{"host":"h","user":"u","port":22,"path":"p","borgPath":"/usr/bin/borg"}}]}"#
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let state = try decoder.decode(AppState.self, from: Data(json.utf8))
+        #expect(state.disks.first?.needsMigration == true)
+        #expect(state.disks.first?.remote?.path == "p")
+        #expect(!KnownDisk(id: "n", name: "n", mode: .repokey, diskEncrypted: false, repoFolder: "r").needsMigration)
     }
 
     @Test func failedAttemptsWaitBeforeRetrying() {
@@ -271,24 +329,20 @@ func fakeVolume(at url: URL, encrypted: Bool) -> VolumeInfo {
         let port = Int(parts[0])!
         let authorizedKeys = URL(fileURLWithPath: parts[1])
         let root = try tempDir()
-        guard let bin = BorgBinary.locate(bundleResources: nil) else { return }
+        guard let bin = ResticBinary.locate(bundleResources: nil) else { return }
         let keys = SSHKeyStore(directory: root.appendingPathComponent("ssh"))
         let pub = try keys.ensureKey()
         let secrets = MemorySecretStore()
         let engine = BackupEngine(
-            borg: Borg(binary: bin, baseDirectory: root.appendingPathComponent("borg"), ssh: keys.options),
+            restic: Restic(binary: bin, cacheDirectory: root.appendingPathComponent("cache"), ssh: keys.options),
             secrets: secrets, catalogs: CatalogStore(directory: root.appendingPathComponent("catalogs")))
-        // Borg is not on sshd's default PATH, so give its full path like a user would.
         let server = RemoteServer(host: "127.0.0.1", user: NSUserName(), port: port,
-                                  path: "/tmp/nlssh/repos/\(UUID().uuidString)", borgPath: bin.path)
+                                  path: "/tmp/nlssh/repos/\(UUID().uuidString)")
 
         try "".write(to: authorizedKeys, atomically: true, encoding: .utf8)
         #expect(await engine.probeServer(server) == .rejectedKey)
         try (pub + "\n").write(to: authorizedKeys, atomically: true, encoding: .utf8)
         #expect(await engine.probeServer(server) == .noRepository)
-        let bad = RemoteServer(host: "127.0.0.1", user: NSUserName(), port: port, path: server.path, borgPath: "/nonexistent/borg")
-        let badProbe = await engine.probeServer(bad)
-        #expect(badProbe != .noRepository && badProbe != .openable)
 
         let known = try await engine.createServer(server, passphrase: "test pass")
         #expect(known.isRemote)

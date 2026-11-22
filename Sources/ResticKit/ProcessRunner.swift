@@ -155,7 +155,7 @@ public enum ProcessRunner {
         } onCancel: {
             guard process.isRunning else { return }
             let pid = process.processIdentifier
-            // The bundled borg is a bootloader with a child process, so signal the whole tree.
+            // Signal the whole tree, so child processes such as ssh stop too.
             ProcessTree.signal(pid, SIGINT)
             DispatchQueue.global().asyncAfter(deadline: .now() + 10) {
                 if process.isRunning { ProcessTree.signal(pid, SIGTERM) }
