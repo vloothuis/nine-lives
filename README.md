@@ -7,6 +7,10 @@ Plug in a USB disk, or point Nine Lives at a server, and your files are backed u
 
 [**Download the latest version**](https://github.com/vloothuis/nine-lives/releases/latest) · macOS 15 or later · Apple silicon and Intel · free and open source
 
+<p align="center"><img src="docs/shots/overview.png" width="720" alt="Nine Lives overview window"></p>
+
+Website: https://vloothuis.github.io/nine-lives
+
 ## How it works
 
 1. Open Nine Lives and choose a backup disk, or a server you reach over SSH.

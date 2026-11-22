@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nine Lives: backups for your Mac that take care of themselves</title>
+<meta name="description" content="Plug in a USB disk, or point Nine Lives at a server, and your Mac is backed up. Free and open source for macOS 15 and later.">
+<meta property="og:title" content="Nine Lives: backups for your Mac">
+<meta property="og:description" content="Plug in a USB disk and your Mac is backed up. If something goes wrong, you get your files back.">
+<meta property="og:image" content="https://vloothuis.github.io/nine-lives/shots/overview.png">
+<link rel="icon" href="icon.png">
+<style>
+  :root {
+    --bg: #fbfaff; --fg: #1d1b2b; --muted: #5d5a73; --card: #ffffff; --line: #e6e3f2;
+    --accent: #6652e0; --accent-fg: #ffffff; --soft: #efecff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #15131f; --fg: #f1effa; --muted: #a9a5c0; --card: #1f1c2e; --line: #2d2942; --accent: #8a79ff; --accent-fg: #15131f; --soft: #26223a; }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 17px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+  a { color: var(--accent); }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 24px; }
+  header.top { display: flex; align-items: center; justify-content: space-between; padding: 20px 0; }
+  header.top .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; color: var(--fg); text-decoration: none; }
+  header.top img { width: 32px; height: 32px; border-radius: 8px; }
+  header.top nav a { margin-left: 22px; color: var(--muted); text-decoration: none; font-size: 15px; }
+  header.top nav a:hover { color: var(--fg); }
+  .hero { text-align: center; padding: 48px 0 24px; }
+  .hero img.icon { width: 136px; height: 136px; border-radius: 30px; box-shadow: 0 14px 36px rgba(102, 82, 224, .35); }
+  h1 { font-size: clamp(34px, 6vw, 56px); line-height: 1.1; margin: 28px 0 14px; letter-spacing: -0.02em; }
+  .lead { font-size: clamp(18px, 2.4vw, 22px); color: var(--muted); max-width: 640px; margin: 0 auto 30px; }
+  .buttons { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
+  .btn { display: inline-block; padding: 13px 24px; border-radius: 12px; font-weight: 600; text-decoration: none; border: 1px solid var(--line); background: var(--card); color: var(--fg); }
+  .btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+  .btn:hover { filter: brightness(1.06); }
+  .fine { color: var(--muted); font-size: 14px; margin-top: 14px; }
+  .shot { margin: 44px auto 0; max-width: 900px; }
+  .shot img { width: 100%; height: auto; display: block; border-radius: 12px; box-shadow: 0 24px 60px rgba(30, 20, 80, .28); border: 1px solid var(--line); }
+  section { padding: 64px 0 0; }
+  h2 { font-size: clamp(26px, 4vw, 36px); line-height: 1.2; margin: 0 0 12px; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); margin: 0 0 28px; max-width: 640px; }
+  .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; counter-reset: s; }
+  .step, .feature { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 22px; }
+  .step::before { counter-increment: s; content: counter(s); display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: var(--soft); color: var(--accent); font-weight: 700; margin-bottom: 10px; }
+  .step h3, .feature h3 { margin: 0 0 6px; font-size: 18px; }
+  .step p, .feature p { margin: 0; color: var(--muted); font-size: 16px; }
+  .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 16px; }
+  .gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; }
+  .gallery figure { margin: 0; }
+  .gallery img { width: 100%; height: auto; border-radius: 10px; border: 1px solid var(--line); box-shadow: 0 10px 30px rgba(30, 20, 80, .18); }
+  .gallery figcaption { color: var(--muted); font-size: 15px; margin-top: 10px; text-align: center; }
+  details { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 18px; margin-bottom: 10px; }
+  summary { cursor: pointer; font-weight: 600; }
+  details p { color: var(--muted); margin: 10px 0 0; font-size: 16px; }
+  code { background: var(--soft); padding: 2px 6px; border-radius: 6px; font-size: 0.9em; }
+  .cta { text-align: center; background: var(--soft); border-radius: 24px; padding: 48px 24px; margin-top: 72px; }
+  footer { color: var(--muted); font-size: 14px; text-align: center; padding: 48px 0; }
+  footer a { color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="#"><img src="icon.png" alt="">Nine Lives</a>
+    <nav>
+      <a href="#how">How it works</a>
+      <a href="#features">Features</a>
+      <a href="#faq">Questions</a>
+      <a href="https://github.com/vloothuis/nine-lives">GitHub</a>
+    </nav>
+  </header>
+
+  <main>
+    <div class="hero">
+      <img class="icon" src="icon.png" alt="Nine Lives cat icon">
+      <h1>Backups for your Mac that take care of themselves.</h1>
+      <p class="lead">Plug in a USB disk, or point Nine Lives at a server. Your files are backed up. If something goes wrong, you get them back.</p>
+      <div class="buttons">
+        <a class="btn primary" id="download" href="https://github.com/vloothuis/nine-lives/releases/latest">Download for Mac</a>
+        <a class="btn" href="https://github.com/vloothuis/nine-lives">View on GitHub</a>
+      </div>
+      <p class="fine" id="fine">macOS 15 or later · Apple silicon and Intel · free and open source</p>
+      <div class="shot"><img src="shots/overview.png" alt="Nine Lives overview window: Your Mac is backed up" width="900" height="620"></div>
+    </div>
+
+    <section id="how">
+      <h2>Set it up once. Forget about it.</h2>
+      <p class="sub">No schedules to learn and no settings to get wrong.</p>
+      <div class="steps">
+        <div class="step"><h3>Choose where backups go</h3><p>Pick a USB disk, or enter a server you reach over SSH, such as a NAS or a rented backup server.</p></div>
+        <div class="step"><h3>Leave it alone</h3><p>Backups start when the disk is connected, and run on a schedule for servers. You get a notice when it is done and safe to unplug.</p></div>
+        <div class="step"><h3>Get files back</h3><p>Open Restore, browse your files by date, and put them in a folder or back where they were.</p></div>
+      </div>
+    </section>
+
+    <section id="features">
+      <h2>Made to be trusted</h2>
+      <p class="sub">Backups are only worth something if they work on the day you need them.</p>
+      <div class="features">
+        <div class="feature"><h3>Always encrypted</h3><p>Server backups are encrypted before they leave your Mac. Nine Lives gives you a recovery passphrase to keep somewhere safe.</p></div>
+        <div class="feature"><h3>Checked every month</h3><p>Nine Lives restores real files from your backups to prove they can be read.</p></div>
+        <div class="feature"><h3>Like Time Machine</h3><p>Keeps hourly, daily, weekly and monthly versions, and skips caches and other files you do not need.</p></div>
+        <div class="feature"><h3>Several disks</h3><p>Rotate disks, keep one at the office, and add a server on top. Each has its own backup.</p></div>
+        <div class="feature"><h3>No lock-in</h3><p>Built on <a href="https://www.borgbackup.org">BorgBackup</a>. Your backups stay readable with plain <code>borg</code>, and a <code>HOW TO RESTORE.txt</code> sits next to them.</p></div>
+        <div class="feature"><h3>Free and open</h3><p>BSD licensed, no account, no tracking. Read every line of it on GitHub.</p></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>A look inside</h2>
+      <p class="sub">A small window and a menu bar icon. That is all.</p>
+      <div class="gallery">
+        <figure><img src="shots/disks.png" alt="Disks view with a server and a USB disk" loading="lazy"><figcaption>Your disks and servers, and when each was last checked</figcaption></figure>
+        <figure><img src="shots/activity.png" alt="Activity view listing recent backups" loading="lazy"><figcaption>A plain list of what was backed up and when</figcaption></figure>
+      </div>
+    </section>
+
+    <section id="faq">
+      <h2>Questions</h2>
+      <details><summary>macOS says it cannot verify the app. What do I do?</summary>
+        <p>Nine Lives is not notarized yet. Right-click the app, choose <b>Open</b>, then <b>Open</b> again. If macOS still refuses, run <code>xattr -dr com.apple.quarantine "/Applications/Nine Lives.app"</code> in Terminal.</p></details>
+      <details><summary>Which file do I download?</summary>
+        <p>Use the <code>arm64</code> file for Macs with an M-series chip. Use <code>x86_64</code> for older Intel Macs. Not sure? Apple menu, About This Mac, shows your chip.</p></details>
+      <details><summary>Does it back up everything?</summary>
+        <p>It backs up your home folder. To include Mail, Photos and other protected data, give Nine Lives Full Disk Access in System Settings, Privacy &amp; Security. The app guides you through it.</p></details>
+      <details><summary>What do I need on my server?</summary>
+        <p>A machine you can reach over SSH with <code>borg</code> installed. Nine Lives creates its own SSH key and shows you the one line to add to the server.</p></details>
+      <details><summary>What if I lose my disk and my Mac?</summary>
+        <p>Install Nine Lives on a new Mac, add the disk or server, and enter your recovery passphrase. Or use plain <code>borg</code>, as described in <code>HOW TO RESTORE.txt</code>.</p></details>
+    </section>
+
+    <div class="cta">
+      <h2>Give your Mac nine lives.</h2>
+      <p class="sub" style="margin-inline:auto">Free, open source, and ready in a minute.</p>
+      <div class="buttons"><a class="btn primary" id="download2" href="https://github.com/vloothuis/nine-lives/releases/latest">Download for Mac</a></div>
+    </div>
+  </main>
+
+  <footer>
+    Nine Lives is BSD licensed and built on BorgBackup.
+    <a href="https://github.com/vloothuis/nine-lives">Source</a> ·
+    <a href="https://github.com/vloothuis/nine-lives/releases">All releases</a> ·
+    <a href="https://github.com/vloothuis/nine-lives/issues">Report a problem</a>
+  </footer>
+</div>
+
+<script>
+  // Browsers hide the chip type, so the main button gets the Apple silicon file and Intel gets its own link.
+  fetch("https://api.github.com/repos/vloothuis/nine-lives/releases/latest")
+    .then(r => r.ok ? r.json() : Promise.reject())
+    .then(rel => {
+      const find = n => rel.assets.find(a => a.name.endsWith(n + ".dmg"));
+      const arm = find("arm64"), intel = find("x86_64");
+      if (!arm) return;
+      for (const id of ["download", "download2"]) document.getElementById(id).href = arm.browser_download_url;
+      document.getElementById("fine").innerHTML =
+        "Version " + rel.tag_name.replace(/^v/, "") + " for Apple silicon (M1 and later)" +
+        (intel ? ' · <a href="' + intel.browser_download_url + '">Intel Mac</a>' : "") +
+        " · macOS 15 or later · free and open source";
+    })
+    .catch(() => {});
+</script>
+</body>
+</html>

@@ -7,7 +7,11 @@ public final class StateStore: @unchecked Sendable {
     private let lock = NSLock()
 
     public static var defaultDirectory: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        // Lets demos and screenshots run with their own state.
+        if let path = ProcessInfo.processInfo.environment["NINELIVES_STATE_DIR"] {
+            return URL(fileURLWithPath: path, isDirectory: true)
+        }
+        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Nine Lives", isDirectory: true)
     }
 
