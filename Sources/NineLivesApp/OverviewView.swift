@@ -9,6 +9,7 @@ struct OverviewView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 statusCard
+                if !c.optionalFindings.isEmpty { optionalCard }
                 if case .backingUp(let id, let info) = c.activity { progressCard(id: id, info: info) }
                 if case .verifying(_, let text) = c.activity {
                     Card { HStack { ProgressView().controlSize(.small); Text(text) } }
@@ -39,6 +40,32 @@ struct OverviewView: View {
                 }
             }
         }
+    }
+
+    private var optionalCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Large items are not backed up yet").font(.headline)
+                Text("These are left out until you choose. You can change this later in Settings.")
+                    .font(.callout).foregroundStyle(.secondary)
+                ForEach(c.optionalFindings) { f in
+                    HStack(alignment: .top, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("\(f.title), \(ByteCountFormatter.string(fromByteCount: f.size, countStyle: .file))")
+                            Text(f.paths.map { displayPath($0) }.joined(separator: ", "))
+                                .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                        }
+                        Spacer()
+                        Button("Skip") { c.answerOptional(f, backUp: false) }
+                        Button("Back Up") { c.answerOptional(f, backUp: true) }.buttonStyle(.borderedProminent)
+                    }
+                }
+            }
+        }
+    }
+
+    private func displayPath(_ p: String) -> String {
+        p.hasPrefix(NSHomeDirectory()) ? "~" + p.dropFirst(NSHomeDirectory().count) : p
     }
 
     @ViewBuilder private var subtitle: some View {

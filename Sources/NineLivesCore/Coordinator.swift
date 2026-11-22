@@ -41,6 +41,10 @@ public final class BackupCoordinator {
     /// True on a hotspot or in Low Data Mode, where scheduled backups to servers wait.
     public private(set) var networkMetered = false
 
+    /// Large items found after a backup that wait for the user to choose.
+    public private(set) var optionalFindings: [OptionalFinding] = []
+
+    @ObservationIgnored private var announcedFindings: Set<String> = []
     @ObservationIgnored private let store: StateStore
     @ObservationIgnored private let secrets: SecretStore
     @ObservationIgnored private let notifier = Notifier()
@@ -377,6 +381,7 @@ public final class BackupCoordinator {
         activity = .idle
         notifyBackupFinished(record, disk: disk, ejected: ejected, ejectProblem: ejectProblem)
         currentTask = nil
+        if record.outcome == .success || record.outcome == .warning { scanForOptionalItems() }
         if record.outcome == .success || record.outcome == .warning, !ejected {
             // Verification runs right after a backup when it is due and the disk is still connected.
             if let d = self.disk(disk.id),
@@ -384,6 +389,39 @@ public final class BackupCoordinator {
                 startVerification(diskID: d.id)
             }
         }
+    }
+
+    // MARK: - Large optional items
+
+    private func scanForOptionalItems() {
+        let settings = state.settings
+        Task { [weak self] in
+            let findings = await Task.detached(priority: .utility) {
+                OptionalScanner.scan(rules: settings.rules, answered: settings.answeredRuleIDs, sources: settings.sources)
+            }.value
+            guard let self else { return }
+            self.optionalFindings = findings
+            let fresh = findings.filter { !self.announcedFindings.contains($0.id) }
+            guard !fresh.isEmpty else { return }
+            self.announcedFindings.formUnion(fresh.map(\.id))
+            let names = fresh.prefix(2).map { "\($0.title) (\(Self.sizeText($0.size)))" }.joined(separator: ", ")
+            self.notifier.post(title: "Large items are not backed up yet",
+                               body: "\(names)\(fresh.count > 2 ? " and more" : ""). Open Nine Lives to choose.",
+                               id: "optional-items")
+        }
+    }
+
+    private static func sizeText(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+
+    /// Records the answer. Backing an item up stops skipping it, skipping it keeps it out of the backup.
+    public func answerOptional(_ finding: OptionalFinding, backUp: Bool) {
+        updateSettings {
+            if let i = $0.rules.firstIndex(where: { $0.id == finding.id }) { $0.rules[i].enabled = !backUp }
+            if !$0.answeredRuleIDs.contains(finding.id) { $0.answeredRuleIDs.append(finding.id) }
+        }
+        optionalFindings.removeAll { $0.id == finding.id }
     }
 
     private func notifyBackupFinished(_ r: BackupRecord, disk: KnownDisk, ejected: Bool, ejectProblem: Bool) {

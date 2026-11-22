@@ -110,6 +110,43 @@ struct SkipError: Error {}
         #expect(!box.items.contains { $0.path.hasSuffix("Caches/c") })
     }
 
+    @Test func slashPatternsAndMarkersWork() async throws {
+        let borg = try testBorg()
+        let root = try makeTempDir()
+        let src = root.appendingPathComponent("src")
+        let fm = FileManager.default
+        func write(_ path: String) throws {
+            let u = src.appendingPathComponent(path)
+            try fm.createDirectory(at: u.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try "x".write(to: u, atomically: true, encoding: .utf8)
+        }
+        try write("Library/Application Support/Slack/Cache/blob")
+        try write("Library/Application Support/Slack/settings.json")
+        try write("app/.nx/cache/blob")
+        try write("app/.nx/project.json")
+        try write("env/pyvenv.cfg")
+        try write("env/lib/site.py")
+        try write("app/main.py")
+        let repo = BorgRepo(url: root.appendingPathComponent("repo"))
+        try await borg.initRepository(repo, mode: .authenticated)
+        _ = try await borg.create(
+            repo: repo, archive: "a",
+            options: CreateOptions(
+                sources: [src.path],
+                excludePatterns: ["fm:*/Library/Application Support/*/Cache", "fm:*/.nx/cache"],
+                excludeIfPresent: ["pyvenv.cfg"]),
+            progress: { _ in })
+        let box = ItemBox()
+        try await borg.listItems(repo: repo, archive: "a") { box.add($0) }
+        let paths = box.items.map(\.path)
+        #expect(paths.contains { $0.hasSuffix("Slack/settings.json") })
+        #expect(paths.contains { $0.hasSuffix(".nx/project.json") })
+        #expect(paths.contains { $0.hasSuffix("app/main.py") })
+        #expect(!paths.contains { $0.hasSuffix("Slack/Cache/blob") })
+        #expect(!paths.contains { $0.hasSuffix(".nx/cache/blob") })
+        #expect(!paths.contains { $0.hasSuffix("env/lib/site.py") })
+    }
+
     @Test func wrongPassphraseIsReported() async throws {
         let borg = try testBorg()
         let root = try makeTempDir()

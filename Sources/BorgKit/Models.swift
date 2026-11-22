@@ -153,7 +153,7 @@ public struct CreateOptions: Sendable {
         excludeCaches: Bool = true,
         oneFileSystem: Bool = true,
         excludeIfPresent: [String] = [".nobackup"],
-        compression: String = "zstd,3"
+        compression: String = "auto,zstd,3"
     ) {
         self.sources = sources
         self.excludePatterns = excludePatterns

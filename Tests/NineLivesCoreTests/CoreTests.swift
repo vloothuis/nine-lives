@@ -62,6 +62,46 @@ func tempDir() throws -> URL {
         #expect(p.contains("pp:/Users/me/Library/Application Support/Nine Lives/Borg"))
     }
 
+    @Test func defaultRuleIDsAreUnique() {
+        let ids = DefaultRules.all.map(\.id)
+        #expect(Set(ids).count == ids.count)
+    }
+
+    @Test func markerRulesAreNotPatterns() {
+        let s = BackupSettings()
+        #expect(s.excludeMarkers.contains("pyvenv.cfg"))
+        #expect(!s.excludePatterns(home: "/h").contains { $0.contains("pyvenv.cfg") })
+    }
+
+    @Test func askRulesSkipUntilAnswered() {
+        let s = BackupSettings()
+        let r = s.rules.first { $0.value == ".rustup/toolchains" }
+        #expect(r?.ask == true)
+        #expect(r?.enabled == true)
+        #expect(s.rules.first { $0.value == ".next" }?.enabled == true)
+    }
+
+    @Test func oldRulesWithoutCategoryStillDecode() throws {
+        let json = #"{"id":"x","title":"t","detail":"","kind":"home","value":"v","enabled":true,"builtIn":false}"#
+        let r = try JSONDecoder().decode(ExcludeRule.self, from: Data(json.utf8))
+        #expect(r.category == ExcludeRule.defaultCategory)
+    }
+
+    @Test func scannerFindsLargeItemsOnce() throws {
+        let home = try tempDir().path
+        let fm = FileManager.default
+        try fm.createDirectory(atPath: home + "/Documents/vm.pvm", withIntermediateDirectories: true)
+        try Data(count: 3_000_000).write(to: URL(fileURLWithPath: home + "/Documents/vm.pvm/disk.hdd"))
+        try fm.createDirectory(atPath: home + "/.colima", withIntermediateDirectories: true)
+        try Data(count: 10).write(to: URL(fileURLWithPath: home + "/.colima/tiny"))
+        let rules = BackupSettings().rules
+        let found = OptionalScanner.scan(rules: rules, answered: [], sources: [home], home: home, minimumSize: 1_000_000)
+        #expect(found.map(\.id) == ["anywhere:*.pvm"] || found.contains { $0.title == "Parallels machines" })
+        #expect(!found.contains { $0.paths.contains { $0.hasSuffix(".colima") } })
+        let again = OptionalScanner.scan(rules: rules, answered: found.map(\.id), sources: [home], home: home, minimumSize: 1_000_000)
+        #expect(again.isEmpty)
+    }
+
     @Test func disabledRulesAreSkipped() {
         var s = BackupSettings()
         for i in s.rules.indices { s.rules[i].enabled = false }
