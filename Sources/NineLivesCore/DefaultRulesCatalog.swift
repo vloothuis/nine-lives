@@ -19,7 +19,7 @@ private func group(_ category: String, _ detail: String, ask: Bool = false, _ it
 extension DefaultRules {
     static let developer: [ExcludeRule] =
         javascript + python + rust + golang + jvm + apple + native + dotnet + ruby + php
-        + functional + mobile + games + infrastructure + editors + toolchains
+        + functional + mobile + games + infrastructure + editors + toolchains + aiModels
 
     static let macOS: [ExcludeRule] = system + browsersAndApps + media + vmsAndDevices
 
@@ -241,6 +241,10 @@ extension DefaultRules {
         ("Extra Go versions", .home, "sdk"),
         ("JDKs and tools from SDKMAN", .home, ".sdkman/candidates"),
         ("Android SDK", .home, "Library/Android/sdk"),
+    ])
+
+    private static let aiModels = group("Downloaded AI models", "Can be downloaded again, but the files are large. Skipped until you decide. Nine Lives asks after a backup when it finds more than 2 GB.", ask: true, [
+        ("Ollama models", .home, ".ollama/models"),
     ])
 
     // MARK: macOS
