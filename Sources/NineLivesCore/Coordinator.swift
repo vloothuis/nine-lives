@@ -456,6 +456,21 @@ public final class BackupCoordinator {
         if optionalFindings[i].items.isEmpty { optionalFindings.remove(at: i) }
     }
 
+    /// Adds a rule that skips this folder from the next backup on.
+    public func skipFolder(_ path: String) {
+        guard !isSkipped(path) else { return }
+        updateSettings {
+            $0.rules.append(ExcludeRule(id: UUID().uuidString, title: (path as NSString).abbreviatingWithTildeInPath,
+                                        detail: "Added by you from backup notes", kind: .absolute, value: path, builtIn: false))
+        }
+    }
+
+    /// True when an enabled rule skips exactly this folder.
+    public func isSkipped(_ path: String) -> Bool {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return state.settings.rules.contains { $0.enabled && $0.pattern(home: home) == path }
+    }
+
     /// Forgets a single-item answer, so the item is asked about again after the next backup.
     public func forgetChoice(path: String) {
         updateSettings { $0.pathChoices[path] = nil }
