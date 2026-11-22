@@ -6,6 +6,8 @@ import BorgKit
 public struct ProgressInfo: Equatable, Sendable {
     public var files: Int64 = 0
     public var bytes: Int64 = 0
+    /// Bytes added to the repository so far (after deduplication and compression).
+    public var sentBytes: Int64 = 0
     public var fraction: Double?
     public var currentPath = ""
     public var started = Date()
@@ -302,6 +304,7 @@ public final class BackupCoordinator {
         guard case .backingUp(let id, var info) = activity else { return }
         info.files = p.fileCount
         info.bytes = p.originalSize
+        info.sentBytes = p.deduplicatedSize
         info.currentPath = p.currentPath
         if previousFiles > 0 { info.fraction = min(Double(p.fileCount) / Double(previousFiles), 0.99) }
         activity = .backingUp(diskID: id, info)
