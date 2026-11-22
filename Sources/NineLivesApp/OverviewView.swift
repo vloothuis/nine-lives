@@ -64,7 +64,7 @@ struct OverviewView: View {
                     Button("Stop") { c.cancelCurrent() }
                 }
                 if let f = info.fraction { ProgressView(value: f) } else { ProgressView().progressViewStyle(.linear) }
-                Text("\(info.files.formatted()) files · \(Fmt.bytes(info.bytes)) read")
+                Text("\(info.files.formatted()) files · \(Fmt.bytes(info.bytes)) checked · \(Fmt.bytes(info.sentBytes)) sent")
                     .font(.callout).foregroundStyle(.secondary)
                 Text(info.currentPath).font(.caption).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
             }
