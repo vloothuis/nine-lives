@@ -492,7 +492,8 @@ public final class BackupEngine: Sendable {
         let id = try await recovering(repo) { try await checkIdentity(disk: disk, repo: repo) }
 
         let options = CreateOptions(
-            sources: sources, excludePatterns: settings.excludePatterns(), host: Machine.backupHost, tag: Self.tag)
+            sources: sources, excludePatterns: settings.excludePatterns(), includePatterns: settings.includePatterns,
+            excludeIfPresent: [".nobackup"] + settings.excludeMarkers, host: Machine.backupHost, tag: Self.tag)
         let created = try await recovering(repo) {
             try await restic.backup(repo: repo, options: options, progress: progress)
         }

@@ -233,6 +233,8 @@ public final class Restic: Sendable {
         if options.oneFileSystem { args.append("--one-file-system") }
         for tag in options.excludeIfPresent { args += ["--exclude-if-present", tag] }
         for p in options.excludePatterns { args += ["--exclude", p] }
+        // A negated pattern that comes later wins, so these paths stay in the backup.
+        for p in options.includePatterns { args += ["--exclude", "!" + p] }
         args += options.sources
 
         let summary = SummaryBox()

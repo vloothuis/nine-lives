@@ -114,6 +114,48 @@ struct SkipError: Error {}
         #expect(!box.items.contains { $0.path.hasSuffix("Caches/c") })
     }
 
+    @Test func slashPatternsMarkersAndIncludesWork() async throws {
+        let restic = try testRestic()
+        let root = try makeTempDir()
+        let src = root.appendingPathComponent("src")
+        let fm = FileManager.default
+        func write(_ path: String) throws {
+            let u = src.appendingPathComponent(path)
+            try fm.createDirectory(at: u.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try "x".write(to: u, atomically: true, encoding: .utf8)
+        }
+        try write("Library/Application Support/Slack/Cache/blob")
+        try write("Library/Application Support/Slack/settings.json")
+        try write("app/.nx/cache/blob")
+        try write("app/.nx/project.json")
+        try write("env/pyvenv.cfg")
+        try write("env/lib/site.py")
+        try write("app/main.py")
+        try write("vms/a.pvm/disk")
+        try write("vms/b.pvm/disk")
+        let repo = ResticRepo(url: root.appendingPathComponent("repo"), password: "pw")
+        try await restic.initRepository(repo)
+        let r = try await restic.backup(
+            repo: repo,
+            options: CreateOptions(
+                sources: [src.path],
+                excludePatterns: ["Library/Application Support/*/Cache", ".nx/cache", "*.pvm"],
+                includePatterns: [src.path + "/vms/a.pvm"],
+                excludeIfPresent: ["pyvenv.cfg"]),
+            progress: { _ in })
+        let box = ItemBox()
+        try await restic.listItems(repo: repo, snapshot: r.archiveID) { box.add($0) }
+        let paths = box.items.map(\.path)
+        #expect(paths.contains { $0.hasSuffix("Slack/settings.json") })
+        #expect(paths.contains { $0.hasSuffix(".nx/project.json") })
+        #expect(paths.contains { $0.hasSuffix("app/main.py") })
+        #expect(!paths.contains { $0.hasSuffix("Slack/Cache/blob") })
+        #expect(!paths.contains { $0.hasSuffix(".nx/cache/blob") })
+        #expect(!paths.contains { $0.hasSuffix("env/lib/site.py") })
+        #expect(paths.contains { $0.hasSuffix("a.pvm/disk") })
+        #expect(!paths.contains { $0.hasSuffix("b.pvm/disk") })
+    }
+
     @Test func wrongPassphraseIsReported() async throws {
         let restic = try testRestic()
         let root = try makeTempDir()

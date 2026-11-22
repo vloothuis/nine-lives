@@ -67,16 +67,20 @@ struct SettingsView: View {
             }
 
             Section("Skipped automatically") {
-                ForEach(c.state.settings.rules.indices, id: \.self) { i in
-                    let rule = c.state.settings.rules[i]
-                    if rule.builtIn && !rule.detail.isEmpty || !rule.builtIn {
-                        Toggle(isOn: Binding(get: { c.state.settings.rules[i].enabled },
-                                             set: { v in c.updateSettings { $0.rules[i].enabled = v } })) {
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(rule.title)
-                                if !rule.detail.isEmpty { Text(rule.detail).font(.caption).foregroundStyle(.secondary) }
+                ForEach(ruleCategories, id: \.self) { category in
+                    DisclosureGroup {
+                        ForEach(c.state.settings.rules.indices.filter { c.state.settings.rules[$0].category == category }, id: \.self) { i in
+                            let rule = c.state.settings.rules[i]
+                            Toggle(isOn: Binding(get: { c.state.settings.rules[i].enabled },
+                                                 set: { v in c.updateSettings { $0.rules[i].enabled = v } })) {
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(rule.title)
+                                    if !rule.detail.isEmpty { Text(rule.detail).font(.caption).foregroundStyle(.secondary) }
+                                }
                             }
                         }
+                    } label: {
+                        Toggle(category, isOn: categoryBinding(category))
                     }
                 }
                 Button("Skip Another Folder…") {
@@ -88,6 +92,22 @@ struct SettingsView: View {
                     }
                 }
                 Text("Folders that contain a file named .nobackup are skipped too.").font(.caption).foregroundStyle(.secondary)
+            }
+
+            if !c.state.settings.pathChoices.isEmpty {
+                Section("Your choices for single items") {
+                    ForEach(c.state.settings.pathChoices.keys.sorted(), id: \.self) { path in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(displayPath(path))
+                                Text(c.state.settings.pathChoices[path] == true ? "Backed up" : "Skipped")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button("Ask Again") { c.forgetChoice(path: path) }
+                        }
+                    }
+                }
             }
 
             Section("Advanced") {
@@ -118,6 +138,24 @@ struct SettingsView: View {
         .task(id: c.state.settings.enginePathOverride) {
             engineVersion = (try? await c.engine?.restic.version()) ?? ""
         }
+    }
+
+    /// Categories in the order the rules list them, with the user's own rules last.
+    private var ruleCategories: [String] {
+        var seen: [String] = []
+        for r in c.state.settings.rules where !seen.contains(r.category) { seen.append(r.category) }
+        return seen.filter { $0 != ExcludeRule.defaultCategory } + seen.filter { $0 == ExcludeRule.defaultCategory }
+    }
+
+    /// On when every rule in the category is on, off when none is, and a switch for the whole group.
+    private func categoryBinding(_ category: String) -> Binding<Bool> {
+        Binding(
+            get: { c.state.settings.rules.filter { $0.category == category }.contains { $0.enabled } },
+            set: { on in
+                c.updateSettings { s in
+                    for i in s.rules.indices where s.rules[i].category == category { s.rules[i].enabled = on }
+                }
+            })
     }
 
     private func displayPath(_ p: String) -> String {
