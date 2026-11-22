@@ -327,7 +327,7 @@ public final class BackupEngine: Sendable {
 
         let identity = try await checkIdentity(disk: disk, repo: repo)
 
-        let options = CreateOptions(sources: sources, excludePatterns: settings.excludePatterns(),
+        let options = CreateOptions(sources: sources, excludePatterns: settings.excludePatterns(), includePatterns: settings.includePatterns,
                                    excludeIfPresent: [".nobackup"] + settings.excludeMarkers)
         let name = Self.archiveName()
         let created = try await recovering(repo) {

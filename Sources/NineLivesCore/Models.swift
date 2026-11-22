@@ -137,6 +137,8 @@ public struct BackupSettings: Codable, Equatable, Sendable {
     public var borgPathOverride: String?
     /// Rules the user has already answered, so Nine Lives does not ask again.
     public var answeredRuleIDs: [String]
+    /// Answers for single items: true backs the path up, false skips it. They win over the rules.
+    public var pathChoices: [String: Bool]
 
     public init(
         sources: [String] = [NSHomeDirectory()],
@@ -149,7 +151,8 @@ public struct BackupSettings: Codable, Equatable, Sendable {
         verifyEveryDays: Int = 30,
         pauseOnLowBattery: Bool = true,
         borgPathOverride: String? = nil,
-        answeredRuleIDs: [String] = []
+        answeredRuleIDs: [String] = [],
+        pathChoices: [String: Bool] = [:]
     ) {
         self.sources = sources
         self.rules = rules
@@ -162,6 +165,7 @@ public struct BackupSettings: Codable, Equatable, Sendable {
         self.pauseOnLowBattery = pauseOnLowBattery
         self.borgPathOverride = borgPathOverride
         self.answeredRuleIDs = answeredRuleIDs
+        self.pathChoices = pathChoices
     }
 
     /// Missing keys fall back to defaults, so files written by older versions keep loading.
@@ -179,10 +183,17 @@ public struct BackupSettings: Codable, Equatable, Sendable {
         pauseOnLowBattery = try c.decodeIfPresent(Bool.self, forKey: .pauseOnLowBattery) ?? d.pauseOnLowBattery
         borgPathOverride = try c.decodeIfPresent(String.self, forKey: .borgPathOverride)
         answeredRuleIDs = try c.decodeIfPresent([String].self, forKey: .answeredRuleIDs) ?? []
+        pathChoices = try c.decodeIfPresent([String: Bool].self, forKey: .pathChoices) ?? [:]
     }
 
     public func excludePatterns(home: String = NSHomeDirectory()) -> [String] {
-        (rules.filter(\.enabled) + DefaultRules.always).compactMap { $0.pattern(home: home) }
+        let skipped = pathChoices.filter { !$0.value }.keys.sorted().map { "pp:" + $0 }
+        return (rules.filter(\.enabled) + DefaultRules.always).compactMap { $0.pattern(home: home) } + skipped
+    }
+
+    /// Paths the user chose to back up although a rule skips them.
+    public var includePatterns: [String] {
+        pathChoices.filter(\.value).keys.sorted().map { "pp:" + $0 }
     }
 
     /// File names that make borg skip the folder that holds them.

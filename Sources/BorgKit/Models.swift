@@ -142,6 +142,8 @@ public struct CreateProgress: Sendable {
 public struct CreateOptions: Sendable {
     public var sources: [String]
     public var excludePatterns: [String]
+    /// Borg patterns for paths that stay in the backup although an exclude pattern matches them.
+    public var includePatterns: [String]
     public var excludeCaches: Bool
     public var oneFileSystem: Bool
     public var excludeIfPresent: [String]
@@ -150,6 +152,7 @@ public struct CreateOptions: Sendable {
     public init(
         sources: [String],
         excludePatterns: [String] = [],
+        includePatterns: [String] = [],
         excludeCaches: Bool = true,
         oneFileSystem: Bool = true,
         excludeIfPresent: [String] = [".nobackup"],
@@ -157,6 +160,7 @@ public struct CreateOptions: Sendable {
     ) {
         self.sources = sources
         self.excludePatterns = excludePatterns
+        self.includePatterns = includePatterns
         self.excludeCaches = excludeCaches
         self.oneFileSystem = oneFileSystem
         self.excludeIfPresent = excludeIfPresent

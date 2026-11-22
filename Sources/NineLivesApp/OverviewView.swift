@@ -4,6 +4,7 @@ import NineLivesCore
 struct OverviewView: View {
     @Environment(BackupCoordinator.self) private var c
     @State private var showAddDisk = false
+    @State private var collapsedGroups: Set<String> = []
 
     var body: some View {
         ScrollView {
@@ -46,19 +47,57 @@ struct OverviewView: View {
         Card {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Large items are not backed up yet").font(.headline)
-                Text("These are left out until you choose. You can change this later in Settings.")
+                Text("Choose for a whole kind, or open it to choose per item. You can change this later in Settings.")
                     .font(.callout).foregroundStyle(.secondary)
                 ForEach(c.optionalFindings) { f in
-                    HStack(alignment: .top, spacing: 12) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("\(f.title), \(ByteCountFormatter.string(fromByteCount: f.size, countStyle: .file))")
-                            Text(f.paths.map { displayPath($0) }.joined(separator: ", "))
-                                .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    Divider()
+                    optionalGroup(f)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private func optionalGroup(_ f: OptionalFinding) -> some View {
+        let sizeText = ByteCountFormatter.string(fromByteCount: f.size, countStyle: .file)
+        if f.items.count == 1, let item = f.items.first {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(f.title).fontWeight(.medium)
+                    Text("\(displayPath(item.path)), \(sizeText)").font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                }
+                Spacer()
+                Button("Skip") { c.answerOptional(f, backUp: false) }
+                Button("Back Up") { c.answerOptional(f, backUp: true) }.buttonStyle(.borderedProminent)
+            }
+        } else {
+            DisclosureGroup(isExpanded: Binding(get: { !collapsedGroups.contains(f.id) },
+                                                set: { open in
+                                                    if open { collapsedGroups.remove(f.id) } else { collapsedGroups.insert(f.id) }
+                                                })) {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(f.items) { item in
+                        HStack(alignment: .center, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(URL(fileURLWithPath: item.path).lastPathComponent)
+                                Text("\(displayPath(item.path)), \(ByteCountFormatter.string(fromByteCount: item.size, countStyle: .file))")
+                                    .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                            }
+                            Spacer()
+                            Button("Skip") { c.answerOptional(item, in: f, backUp: false) }.controlSize(.small)
+                            Button("Back Up") { c.answerOptional(item, in: f, backUp: true) }.controlSize(.small)
                         }
-                        Spacer()
-                        Button("Skip") { c.answerOptional(f, backUp: false) }
-                        Button("Back Up") { c.answerOptional(f, backUp: true) }.buttonStyle(.borderedProminent)
                     }
+                }
+                .padding(.top, 6)
+            } label: {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(f.title).fontWeight(.medium)
+                        Text("\(f.items.count) items, \(sizeText)").font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Skip All") { c.answerOptional(f, backUp: false) }
+                    Button("Back Up All") { c.answerOptional(f, backUp: true) }.buttonStyle(.borderedProminent)
                 }
             }
         }

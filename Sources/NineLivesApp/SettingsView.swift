@@ -94,6 +94,22 @@ struct SettingsView: View {
                 Text("Folders that contain a file named .nobackup are skipped too.").font(.caption).foregroundStyle(.secondary)
             }
 
+            if !c.state.settings.pathChoices.isEmpty {
+                Section("Your choices for single items") {
+                    ForEach(c.state.settings.pathChoices.keys.sorted(), id: \.self) { path in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(displayPath(path))
+                                Text(c.state.settings.pathChoices[path] == true ? "Backed up" : "Skipped")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button("Ask Again") { c.forgetChoice(path: path) }
+                        }
+                    }
+                }
+            }
+
             Section("Advanced") {
                 LabeledContent("Backup engine", value: c.borgAvailable ? borgVersion : "Not found")
                 HStack {

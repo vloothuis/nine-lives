@@ -397,7 +397,8 @@ public final class BackupCoordinator {
         let settings = state.settings
         Task { [weak self] in
             let findings = await Task.detached(priority: .utility) {
-                OptionalScanner.scan(rules: settings.rules, answered: settings.answeredRuleIDs, sources: settings.sources)
+                OptionalScanner.scan(rules: settings.rules, answered: settings.answeredRuleIDs,
+                                     answeredPaths: Set(settings.pathChoices.keys), sources: settings.sources)
             }.value
             guard let self else { return }
             self.optionalFindings = findings
@@ -415,13 +416,27 @@ public final class BackupCoordinator {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 
-    /// Records the answer. Backing an item up stops skipping it, skipping it keeps it out of the backup.
+    /// Answers for every item of this kind, now and later. Backing up stops skipping the kind.
     public func answerOptional(_ finding: OptionalFinding, backUp: Bool) {
         updateSettings {
             if let i = $0.rules.firstIndex(where: { $0.id == finding.id }) { $0.rules[i].enabled = !backUp }
             if !$0.answeredRuleIDs.contains(finding.id) { $0.answeredRuleIDs.append(finding.id) }
+            for path in finding.paths { $0.pathChoices[path] = nil }
         }
         optionalFindings.removeAll { $0.id == finding.id }
+    }
+
+    /// Answers for one item. The kind stays unanswered, so new items of it are asked about later.
+    public func answerOptional(_ item: OptionalItem, in finding: OptionalFinding, backUp: Bool) {
+        updateSettings { $0.pathChoices[item.path] = backUp }
+        guard let i = optionalFindings.firstIndex(where: { $0.id == finding.id }) else { return }
+        optionalFindings[i].items.removeAll { $0.path == item.path }
+        if optionalFindings[i].items.isEmpty { optionalFindings.remove(at: i) }
+    }
+
+    /// Forgets a single-item answer, so the item is asked about again after the next backup.
+    public func forgetChoice(path: String) {
+        updateSettings { $0.pathChoices[path] = nil }
     }
 
     private func notifyBackupFinished(_ r: BackupRecord, disk: KnownDisk, ejected: Bool, ejectProblem: Bool) {

@@ -1,11 +1,20 @@
 import Foundation
 
 /// A large item that matches a rule Nine Lives skips until the user decides.
+public struct OptionalItem: Identifiable, Equatable, Sendable {
+    public var path: String
+    public var size: Int64
+    public var id: String { path }
+}
+
+/// All items found for one rule.
 public struct OptionalFinding: Identifiable, Equatable, Sendable {
+    /// The rule ID.
     public var id: String
     public var title: String
-    public var paths: [String]
-    public var size: Int64
+    public var items: [OptionalItem]
+    public var size: Int64 { items.reduce(0) { $0 + $1.size } }
+    public var paths: [String] { items.map(\.path) }
 }
 
 public enum OptionalScanner {
@@ -17,6 +26,7 @@ public enum OptionalScanner {
     public static func scan(
         rules: [ExcludeRule],
         answered: [String],
+        answeredPaths: Set<String> = [],
         sources: [String],
         home: String = NSHomeDirectory(),
         minimumSize: Int64 = OptionalScanner.minimumSize,
@@ -62,10 +72,10 @@ public enum OptionalScanner {
         var findings: [OptionalFinding] = []
         for rule in pending {
             guard let paths = found[rule.id] else { continue }
-            let size = paths.reduce(Int64(0)) { $0 + allocatedSize(of: $1) }
-            if size >= minimumSize {
-                findings.append(OptionalFinding(id: rule.id, title: rule.title, paths: paths.sorted(), size: size))
-            }
+            let items = paths.sorted().filter { !answeredPaths.contains($0) }
+                .map { OptionalItem(path: $0, size: allocatedSize(of: $0)) }
+                .filter { $0.size >= minimumSize }
+            if !items.isEmpty { findings.append(OptionalFinding(id: rule.id, title: rule.title, items: items)) }
         }
         return findings.sorted { $0.size > $1.size }
     }

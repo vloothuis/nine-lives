@@ -102,6 +102,30 @@ func tempDir() throws -> URL {
         #expect(again.isEmpty)
     }
 
+    @Test func pathChoicesBecomePatterns() {
+        var s = BackupSettings()
+        s.pathChoices = ["/h/a.pvm": true, "/h/b.pvm": false]
+        #expect(s.includePatterns == ["pp:/h/a.pvm"])
+        #expect(s.excludePatterns(home: "/h").contains("pp:/h/b.pvm"))
+    }
+
+    @Test func scannerGroupsItemsAndSkipsAnsweredPaths() throws {
+        let home = try tempDir().path
+        let fm = FileManager.default
+        for n in ["a", "b"] {
+            try fm.createDirectory(atPath: home + "/Documents/\(n).pvm", withIntermediateDirectories: true)
+            try Data(count: 2_000_000).write(to: URL(fileURLWithPath: home + "/Documents/\(n).pvm/disk"))
+        }
+        let rules = BackupSettings().rules
+        let all = OptionalScanner.scan(rules: rules, answered: [], sources: [home], home: home, minimumSize: 1_000_000)
+        #expect(all.count == 1)
+        #expect(all.first?.items.count == 2)
+        let paths = try #require(all.first).paths
+        let rest = OptionalScanner.scan(rules: rules, answered: [], answeredPaths: [paths[0]],
+                                        sources: [home], home: home, minimumSize: 1_000_000)
+        #expect(rest.first?.paths == [paths[1]])
+    }
+
     @Test func disabledRulesAreSkipped() {
         var s = BackupSettings()
         for i in s.rules.indices { s.rules[i].enabled = false }

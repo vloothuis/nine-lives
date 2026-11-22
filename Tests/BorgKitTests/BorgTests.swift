@@ -147,6 +147,29 @@ struct SkipError: Error {}
         #expect(!paths.contains { $0.hasSuffix("env/lib/site.py") })
     }
 
+    @Test func includeExceptionBeatsExclude() async throws {
+        let borg = try testBorg()
+        let root = try makeTempDir()
+        let src = root.appendingPathComponent("src")
+        let fm = FileManager.default
+        for n in ["a.pvm", "b.pvm"] {
+            try fm.createDirectory(at: src.appendingPathComponent("vm/" + n), withIntermediateDirectories: true)
+            try "x".write(to: src.appendingPathComponent("vm/\(n)/disk"), atomically: true, encoding: .utf8)
+        }
+        let repo = BorgRepo(url: root.appendingPathComponent("repo"))
+        try await borg.initRepository(repo, mode: .authenticated)
+        _ = try await borg.create(
+            repo: repo, archive: "a",
+            options: CreateOptions(sources: [src.path], excludePatterns: ["fm:*/*.pvm"],
+                                   includePatterns: ["pp:" + src.path + "/vm/a.pvm"]),
+            progress: { _ in })
+        let box = ItemBox()
+        try await borg.listItems(repo: repo, archive: "a") { box.add($0) }
+        let paths = box.items.map(\.path)
+        #expect(paths.contains { $0.hasSuffix("a.pvm/disk") })
+        #expect(!paths.contains { $0.hasSuffix("b.pvm/disk") })
+    }
+
     @Test func wrongPassphraseIsReported() async throws {
         let borg = try testBorg()
         let root = try makeTempDir()
