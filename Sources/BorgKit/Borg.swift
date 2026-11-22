@@ -215,6 +215,8 @@ public final class Borg: Sendable {
         if options.excludeCaches { args += ["--exclude-caches", "--keep-exclude-tags"] }
         if options.oneFileSystem { args += ["--one-file-system"] }
         for tag in options.excludeIfPresent { args += ["--exclude-if-present", tag, "--keep-exclude-tags"] }
+        // Borg uses the first pattern that matches, so includes come before excludes.
+        for p in options.includePatterns { args += ["--pattern", "+" + p] }
         for p in options.excludePatterns { args += ["--exclude", p] }
         args.append(spec(repo, archive: archive))
         args += options.sources
