@@ -16,6 +16,8 @@ public enum EngineError: LocalizedError, Equatable {
     case serverRejectedKey(String)
     case hostKeyChanged(String)
     case borgMissingOnServer(String)
+    case repositoryChanged(String)
+    case notEncrypted(String)
 
     public var errorDescription: String? {
         switch self {
@@ -36,6 +38,10 @@ public enum EngineError: LocalizedError, Equatable {
         case .serverRejectedKey(let n): return "\(n) did not accept the Nine Lives key. Add the key to the server and try again."
         case .hostKeyChanged(let n):
             return "The identity of \(n) changed. This can mean the server was reinstalled, or that someone is intercepting the connection. Backups to it are paused."
+        case .repositoryChanged(let n):
+            return "The backup folder on \(n) is not the one Nine Lives made, or it was changed. Nothing was backed up. If you replaced it on purpose, remove \(n) in Disks and add it again."
+        case .notEncrypted(let n):
+            return "The backup folder on \(n) is not encrypted. Nine Lives only uses encrypted backups on servers."
         case .borgMissingOnServer(let n):
             return "borg is not installed on \(n), or it is not on the server's default path. Install borg there or set its location."
         }
@@ -64,6 +70,7 @@ public enum ExistingRepository: Equatable, Sendable {
 public struct BackupRunResult: Sendable {
     public var create: CreateResult
     public var storedSize: Int64?
+    public var repositoryID: String?
     public var maintenanceWarnings: [String]
 }
 
@@ -148,9 +155,11 @@ public final class BackupEngine: Sendable {
         }
         try await borg.initRepository(BorgRepo(url: url, passphrase: pass), mode: mode)
         writeReadme(near: url, mode: mode)
-        return KnownDisk(
+        var disk = KnownDisk(
             id: volume.id, name: volume.name, mode: mode, diskEncrypted: volume.isEncrypted,
             repoFolder: folder, capacity: volume.totalCapacity)
+        disk.repositoryID = try? await borg.info(repo: BorgRepo(url: url, passphrase: pass)).id
+        return disk
     }
 
     /// Connects to a repository that already exists on the disk, for example after reinstalling macOS.
@@ -159,12 +168,15 @@ public final class BackupEngine: Sendable {
         let url = repositoryURL(folder: folder, on: volume)
         let pass = passphrase ?? secrets.passphrase(for: volume.id) ?? ""
         let info = try await borg.info(repo: BorgRepo(url: url, passphrase: pass))
-        let mode = EncryptionMode(rawValue: info.encryption) ?? .repokey
+        guard let mode = EncryptionMode(rawValue: info.encryption),
+              mode == .repokey || volume.isEncrypted
+        else { throw EngineError.notEncrypted(volume.name) }
         if mode == .repokey { try secrets.setPassphrase(pass, for: volume.id) }
         var disk = KnownDisk(
             id: volume.id, name: volume.name, mode: mode, diskEncrypted: volume.isEncrypted,
             repoFolder: folder, capacity: volume.totalCapacity)
         disk.storedSize = info.storedSize
+        disk.repositoryID = info.id
         if let latest = try? await borg.listArchives(repo: BorgRepo(url: url, passphrase: pass), glob: Self.archivePrefix + "*").first {
             disk.lastBackup = latest.date
         }
@@ -183,7 +195,10 @@ public final class BackupEngine: Sendable {
         }
         let repo = BorgRepo(remote: server.location, remotePath: server.borgPath, passphrase: passphrase)
         do {
-            _ = try await borg.info(repo: repo)
+            let info = try await borg.info(repo: repo)
+            if !(info.encryption.hasPrefix("repokey") || info.encryption.hasPrefix("keyfile")) {
+                return .failed(EngineError.notEncrypted(server.host).localizedDescription, details: nil)
+            }
             return .openable
         } catch is CancellationError {
             return .failed("Cancelled", details: nil)
@@ -207,6 +222,8 @@ public final class BackupEngine: Sendable {
         try await borg.initRepository(
             BorgRepo(remote: server.location, remotePath: server.borgPath, passphrase: passphrase), mode: .repokey)
         try secrets.setPassphrase(passphrase, for: disk.id)
+        disk.repositoryID = try? await borg.info(
+            repo: BorgRepo(remote: server.location, remotePath: server.borgPath, passphrase: passphrase)).id
         disk.addedAt = Date()
         return disk
     }
@@ -214,8 +231,13 @@ public final class BackupEngine: Sendable {
     /// Connects to a repository that already exists on the server.
     public func adoptServer(_ server: RemoteServer, passphrase: String) async throws -> KnownDisk {
         let repo = BorgRepo(remote: server.location, remotePath: server.borgPath, passphrase: passphrase)
+        guard !passphrase.isEmpty else { throw EngineError.missingPassphrase(server.host) }
         let info = try await borg.info(repo: repo)
+        guard info.encryption.hasPrefix("repokey") || info.encryption.hasPrefix("keyfile") else {
+            throw EngineError.notEncrypted(server.host)
+        }
         var disk = KnownDisk(server: server)
+        disk.repositoryID = info.id
         disk.storedSize = info.storedSize
         if let latest = try? await borg.listArchives(repo: repo, glob: Self.archivePrefix + "*").first {
             disk.lastBackup = latest.date
@@ -276,6 +298,15 @@ public final class BackupEngine: Sendable {
         }
     }
 
+    /// Refuses to use a repository whose ID or encryption differs from what was recorded when the disk was added.
+    private func checkIdentity(disk: KnownDisk, repo: BorgRepo) async throws -> RepositoryInfo {
+        let info = try await borg.info(repo: repo)
+        if let known = disk.repositoryID, known != info.id { throw EngineError.repositoryChanged(disk.name) }
+        let expected = disk.isRemote ? "repokey" : (disk.mode == .repokey ? "repokey" : "authenticated")
+        if !info.encryption.hasPrefix(expected) { throw EngineError.repositoryChanged(disk.name) }
+        return info
+    }
+
     public func runBackup(
         disk: KnownDisk,
         on volume: VolumeInfo?,
@@ -294,6 +325,8 @@ public final class BackupEngine: Sendable {
             guard borg.repositoryExists(at: repo.url) else { throw EngineError.repositoryMissing(disk.name) }
         }
 
+        let identity = try await checkIdentity(disk: disk, repo: repo)
+
         let options = CreateOptions(sources: sources, excludePatterns: settings.excludePatterns())
         let name = Self.archiveName()
         let created = try await recovering(repo) {
@@ -310,7 +343,7 @@ public final class BackupEngine: Sendable {
             warnings.append("Cleaning up old backups failed: \(error.localizedDescription)")
         }
         let stored = try? await borg.info(repo: repo).storedSize
-        return BackupRunResult(create: created, storedSize: stored, maintenanceWarnings: warnings)
+        return BackupRunResult(create: created, storedSize: stored, repositoryID: identity.id, maintenanceWarnings: warnings)
     }
 
     // MARK: - Browsing and restoring

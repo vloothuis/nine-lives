@@ -331,6 +331,7 @@ public final class BackupCoordinator {
                 $0.lastBackupStats = result.create.stats
                 $0.lastBackupDuration = end.timeIntervalSince(start)
                 $0.storedSize = result.storedSize ?? $0.storedSize
+                $0.repositoryID = $0.repositoryID ?? result.repositoryID
                 $0.lastFailure = nil
                 if let volume {
                     $0.capacity = volume.totalCapacity

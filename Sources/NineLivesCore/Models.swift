@@ -213,6 +213,8 @@ public struct KnownDisk: Codable, Identifiable, Equatable, Sendable {
     public var remote: RemoteServer?
     /// When the last scheduled attempt failed. Used to wait before trying again.
     public var lastFailure: Date?
+    /// The borg repository ID seen when the disk was added. A different ID means the repository was replaced.
+    public var repositoryID: String?
 
     public var isRemote: Bool { remote != nil }
 
