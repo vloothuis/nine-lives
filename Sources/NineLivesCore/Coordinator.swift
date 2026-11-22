@@ -424,7 +424,8 @@ public final class BackupCoordinator {
         guard let engine else { throw EngineError.borgMissing }
         guard activity.isIdle else { throw EngineError.busy }
         activity = .working(description)
-        defer { activity = .idle }
+        beginKeepAwake(description)
+        defer { endKeepAwake(); activity = .idle }
         return try await work(engine)
     }
 
