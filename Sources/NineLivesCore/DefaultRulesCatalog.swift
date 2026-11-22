@@ -228,7 +228,7 @@ extension DefaultRules {
         ("JetBrains IDEs installed by Toolbox", .home, "Library/Application Support/JetBrains/Toolbox/apps"),
     ])
 
-        private static let toolchains = group("Installed toolchains and SDKs", "Can be installed again, but that takes time. Skipped until you decide. Nine Lives asks after a backup when it finds more than 2 GB.", ask: true, [
+    private static let toolchains = group("Installed toolchains and SDKs", "Downloaded again from the public internet, but that takes time.", [
         ("Rust toolchains", .home, ".rustup/toolchains"),
         ("Python versions from pyenv", .home, ".pyenv/versions"),
         ("Node versions from nvm", .home, ".nvm/versions"),
@@ -243,7 +243,7 @@ extension DefaultRules {
         ("Android SDK", .home, "Library/Android/sdk"),
     ])
 
-    private static let aiModels = group("Downloaded AI models", "Can be downloaded again, but the files are large. Skipped until you decide. Nine Lives asks after a backup when it finds more than 2 GB.", ask: true, [
+    private static let aiModels = group("Downloaded AI models", "Downloaded again from the public internet, but the files are large.", [
         ("Ollama models", .home, ".ollama/models"),
     ])
 

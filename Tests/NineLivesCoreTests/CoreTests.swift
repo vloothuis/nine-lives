@@ -75,9 +75,10 @@ func tempDir() throws -> URL {
 
     @Test func askRulesSkipUntilAnswered() {
         let s = BackupSettings()
-        let r = s.rules.first { $0.value == ".rustup/toolchains" }
+        let r = s.rules.first { $0.value == "VirtualBox VMs" }
         #expect(r?.ask == true)
         #expect(r?.enabled == true)
+        #expect(s.rules.first { $0.value == ".rustup/toolchains" }?.ask == false)
         #expect(s.rules.first { $0.value == ".next" }?.enabled == true)
     }
 
