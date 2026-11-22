@@ -451,4 +451,12 @@ func fakeVolume(at url: URL, encrypted: Bool) -> VolumeInfo {
         #expect(groups[1].cause == .protected)
         #expect(groups[2].cause == .other)
     }
+
+    @Test func skipIsNarrowAndLiteral() {
+        #expect(!BackupNotes.canSkip("/", home: "/Users/a"))
+        #expect(!BackupNotes.canSkip("/Users", home: "/Users/a"))
+        #expect(!BackupNotes.canSkip("/Users/a", home: "/Users/a"))
+        #expect(BackupNotes.canSkip("/Users/a/.ansible/tmp", home: "/Users/a"))
+        #expect(BackupNotes.escapedPattern("/x/[a]*?") == "/x/\\[a\\]\\*\\?")
+    }
 }

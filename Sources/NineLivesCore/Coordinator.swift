@@ -458,17 +458,19 @@ public final class BackupCoordinator {
 
     /// Adds a rule that skips this folder from the next backup on.
     public func skipFolder(_ path: String) {
-        guard !isSkipped(path) else { return }
+        guard BackupNotes.canSkip(path), !isSkipped(path) else { return }
         updateSettings {
             $0.rules.append(ExcludeRule(id: UUID().uuidString, title: (path as NSString).abbreviatingWithTildeInPath,
-                                        detail: "Added by you from backup notes", kind: .absolute, value: path, builtIn: false))
+                                        detail: "Added by you from backup notes", kind: .absolute,
+                                        value: BackupNotes.escapedPattern(path), builtIn: false))
         }
     }
 
     /// True when an enabled rule skips exactly this folder.
     public func isSkipped(_ path: String) -> Bool {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return state.settings.rules.contains { $0.enabled && $0.pattern(home: home) == path }
+        let pattern = BackupNotes.escapedPattern(path)
+        return state.settings.rules.contains { $0.enabled && $0.pattern(home: home) == pattern }
     }
 
     /// Forgets a single-item answer, so the item is asked about again after the next backup.

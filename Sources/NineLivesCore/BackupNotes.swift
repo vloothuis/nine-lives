@@ -42,6 +42,23 @@ public enum BackupNotes {
         return groups
     }
 
+    /// False for folders too broad to skip from a note, such as the home folder or one of its parents.
+    public static func canSkip(_ folder: String, home: String = FileManager.default.homeDirectoryForCurrentUser.path) -> Bool {
+        let f = (folder as NSString).standardizingPath
+        guard f.hasPrefix("/"), f != "/" else { return false }
+        return !(home == f || home.hasPrefix(f + "/"))
+    }
+
+    /// The path as a restic exclude pattern that matches only itself.
+    public static func escapedPattern(_ path: String) -> String {
+        var out = ""
+        for ch in path {
+            if "*?[]\\".contains(ch) { out.append("\\") }
+            out.append(ch)
+        }
+        return out
+    }
+
     /// The absolute path in a message such as "open /a/b: permission denied".
     static func path(in message: String) -> String? {
         guard let start = message.range(of: " /"), let end = message.range(of: ": ", options: .backwards),

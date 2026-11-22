@@ -202,7 +202,7 @@ struct OverviewView: View {
                     .font(.callout.weight(.medium))
                 Text("They belong to another user or only their owner may open them. This is often temporary data left by a tool. Skip the folder if you do not need it in your backup.")
                     .font(.callout).foregroundStyle(.secondary)
-                if let f = g.folder {
+                if let f = g.folder, BackupNotes.canSkip(f) {
                     if c.isSkipped(f) {
                         Text("Skipped from the next backup on.").font(.callout).foregroundStyle(.secondary)
                     } else {
