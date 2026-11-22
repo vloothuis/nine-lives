@@ -117,7 +117,7 @@ final class LogCollector: @unchecked Sendable {
         switch m.message_type {
         case "error":
             let text = m.error?.message ?? m.message ?? "Unknown problem"
-            if warnings.count < 200 { warnings.append(text) }
+            if warnings.count < 200, !warnings.contains(text) { warnings.append(text) }
         case "exit_error":
             if let msg = m.message { errors.append(msg) }
         default:

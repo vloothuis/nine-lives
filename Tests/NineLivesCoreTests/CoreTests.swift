@@ -434,3 +434,29 @@ func fakeVolume(at url: URL, encrypted: Bool) -> VolumeInfo {
         #expect(adopted.lastBackup != nil)
     }
 }
+
+@Suite struct BackupNotesTests {
+    @Test func groupsByFolderAndCause() {
+        let groups = BackupNotes.group([
+            "openfile for readdirnames failed: open /Users/a/.ansible/tmp/ansible-local-1: permission denied",
+            "openfile for readdirnames failed: open /Users/a/.ansible/tmp/ansible-local-2: permission denied",
+            "open /Users/a/Library/Mail/V10: operation not permitted",
+            "lstat /Users/a/gone.txt: no such file or directory",
+            "something odd",
+        ])
+        #expect(groups.count == 3)
+        #expect(groups[0].cause == .unreadable)
+        #expect(groups[0].folder == "/Users/a/.ansible/tmp")
+        #expect(groups[0].paths.count == 2)
+        #expect(groups[1].cause == .protected)
+        #expect(groups[2].cause == .other)
+    }
+
+    @Test func skipIsNarrowAndLiteral() {
+        #expect(!BackupNotes.canSkip("/", home: "/Users/a"))
+        #expect(!BackupNotes.canSkip("/Users", home: "/Users/a"))
+        #expect(!BackupNotes.canSkip("/Users/a", home: "/Users/a"))
+        #expect(BackupNotes.canSkip("/Users/a/.ansible/tmp", home: "/Users/a"))
+        #expect(BackupNotes.escapedPattern("/x/[a]*?") == "/x/\\[a\\]\\*\\?")
+    }
+}

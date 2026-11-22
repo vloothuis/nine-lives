@@ -218,6 +218,8 @@ extension DefaultRules {
         ("kubectl cache", .home, ".kube/cache"),
         ("direnv cache", .anywhere, ".direnv"),
         ("devenv state", .anywhere, ".devenv"),
+        ("Ansible temporary files", .home, ".ansible/tmp"),
+        ("Ansible connection sockets", .home, ".ansible/cp"),
     ])
 
     private static let editors = group("Editors and IDEs", "Downloaded or compiled again by the editor.", [

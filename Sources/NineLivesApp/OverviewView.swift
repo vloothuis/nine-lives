@@ -177,19 +177,47 @@ struct OverviewView: View {
                         if last.outcome == .failed, let m = last.messages.first {
                             ErrorBox(error: ShownError(m, details: last.details))
                         } else {
-                        ForEach(Array(last.messages.prefix(6).enumerated()), id: \.offset) { _, m in
-                            Text(m).font(.callout).textSelection(.enabled)
-                        }
-                        if last.messages.count > 6 {
-                            Text("And \(last.messages.count - 6) more in Activity.").font(.callout).foregroundStyle(.secondary)
-                        }
-                        }
-                        if last.outcome == .warning, last.messages.contains(where: { $0.contains("Permission denied") || $0.contains("Operation not permitted") }) {
-                            Button("Open Full Disk Access Settings") { Permissions.openFullDiskAccessSettings() }
+                            let groups = BackupNotes.group(last.messages)
+                            ForEach(groups.prefix(5)) { g in noteRow(g) }
+                            if groups.count > 5 {
+                                Text("And \(groups.count - 5) more in Activity.").font(.callout).foregroundStyle(.secondary)
+                            }
+                            if groups.isEmpty {
+                                Text("Some files changed or disappeared while the backup ran. This is normal.").font(.callout)
+                            }
                         }
                     }
                 }
             }
         }
+    }
+
+    @ViewBuilder private func noteRow(_ g: BackupNoteGroup) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            switch g.cause {
+            case .unreadable:
+                let folder = displayPath(g.folder ?? "")
+                Text(g.paths.count == 1 ? "1 item in \(folder) could not be read."
+                                        : "\(g.paths.count) items in \(folder) could not be read.")
+                    .font(.callout.weight(.medium))
+                Text("They belong to another user or only their owner may open them. This is often temporary data left by a tool. Skip the folder if you do not need it in your backup.")
+                    .font(.callout).foregroundStyle(.secondary)
+                if let f = g.folder, BackupNotes.canSkip(f) {
+                    if c.isSkipped(f) {
+                        Text("Skipped from the next backup on.").font(.callout).foregroundStyle(.secondary)
+                    } else {
+                        Button("Skip \(folder)") { c.skipFolder(f) }
+                    }
+                }
+            case .protected:
+                Text("macOS blocked access to \(g.paths.count == 1 ? "1 item" : "\(g.paths.count) items") in \(displayPath(g.folder ?? "")).")
+                    .font(.callout.weight(.medium))
+                Text("Give Nine Lives Full Disk Access to back these up.").font(.callout).foregroundStyle(.secondary)
+                Button("Open Full Disk Access Settings") { Permissions.openFullDiskAccessSettings() }
+            case .other:
+                ForEach(g.messages, id: \.self) { Text($0).font(.callout).textSelection(.enabled) }
+            }
+        }
+        .help(g.paths.joined(separator: "\n"))
     }
 }
