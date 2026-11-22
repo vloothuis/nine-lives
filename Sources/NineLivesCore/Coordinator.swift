@@ -49,6 +49,7 @@ public final class BackupCoordinator {
     @ObservationIgnored private var started = false
     @ObservationIgnored private var sleepActivity: NSObjectProtocol?
     @ObservationIgnored private let pathMonitor = NWPathMonitor()
+    @ObservationIgnored private var probing = false
     public var sshKeys: SSHKeyStore { SSHKeyStore(directory: store.sshDirectory) }
 
     public init(store: StateStore = StateStore(), secrets: SecretStore = KeychainSecretStore()) {
@@ -234,6 +235,17 @@ public final class BackupCoordinator {
         startBackup(diskID: disk.id, trigger: .plugIn)
     }
 
+    /// Server backups run only when the server answers, so a laptop away from the server's network stays quiet.
+    private func probeThenRun(_ disk: KnownDisk, _ action: @escaping @MainActor (BackupCoordinator) -> Void) {
+        guard let remote = disk.remote, !probing else { return }
+        probing = true
+        Task {
+            let ok = await ServerReachability.isReachable(host: remote.host, port: remote.port)
+            probing = false
+            if ok, activity.isIdle { action(self) }
+        }
+    }
+
     public func tick() {
         let now = Date()
         remindIfStale(now: now)
@@ -244,6 +256,10 @@ public final class BackupCoordinator {
         for disk in state.disks where isConnected(disk) && mayRunScheduled(disk) && state.settings.intervalMinutes > 0 {
             if Policy.isBackupDue(lastBackup: disk.lastBackup, now: now, intervalMinutes: state.settings.intervalMinutes,
                                   lastFailure: disk.lastFailure) {
+                if disk.isRemote {
+                    probeThenRun(disk) { $0.startBackup(diskID: disk.id, trigger: .scheduled) }
+                    continue
+                }
                 startBackup(diskID: disk.id, trigger: .scheduled)
                 return
             }
@@ -251,6 +267,10 @@ public final class BackupCoordinator {
         for disk in state.disks where isConnected(disk) && mayRunScheduled(disk) && disk.lastFailure == nil {
             if Policy.isVerificationDue(last: disk.lastVerification, now: now, everyDays: state.settings.verifyEveryDays),
                disk.lastBackup != nil {
+                if disk.isRemote {
+                    probeThenRun(disk) { $0.startVerification(diskID: disk.id) }
+                    continue
+                }
                 startVerification(diskID: disk.id)
                 return
             }
