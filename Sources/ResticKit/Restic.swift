@@ -84,13 +84,15 @@ public final class Restic: Sendable {
         repo: ResticRepo?,
         workingDirectory: URL? = nil,
         onMessage: (@Sendable (ResticMessage) -> Void)? = nil,
-        onStdoutLine: (@Sendable (String) -> Void)? = nil
+        onStdoutLine: (@Sendable (String) -> Void)? = nil,
+        intercept: (@Sendable (String) -> Bool)? = nil
     ) async throws -> Execution {
         if let cacheDirectory {
             try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
         }
         let logs = LogCollector()
         let handle: @Sendable (String) -> Void = { line in
+            if let intercept, intercept(line) { return }
             if let m = ResticMessage.parse(line) {
                 logs.add(m)
                 onMessage?(m)
@@ -118,9 +120,12 @@ public final class Restic: Sendable {
         repo: ResticRepo?,
         workingDirectory: URL? = nil,
         onMessage: (@Sendable (ResticMessage) -> Void)? = nil,
-        onStdoutLine: (@Sendable (String) -> Void)? = nil
+        onStdoutLine: (@Sendable (String) -> Void)? = nil,
+        intercept: (@Sendable (String) -> Bool)? = nil
     ) async throws -> Execution {
-        let e = try await execute(args, repo: repo, workingDirectory: workingDirectory, onMessage: onMessage, onStdoutLine: onStdoutLine)
+        let e = try await execute(
+            args, repo: repo, workingDirectory: workingDirectory, onMessage: onMessage, onStdoutLine: onStdoutLine,
+            intercept: intercept)
         switch e.exit {
         case .success, .warning: return e
         case .cancelled: throw CancellationError()
@@ -227,7 +232,8 @@ public final class Restic: Sendable {
         options: CreateOptions,
         progress: @escaping @Sendable (CreateProgress) -> Void
     ) async throws -> CreateResult {
-        var args = ["backup", "--tag", options.tag, "--read-concurrency", String(options.readConcurrency)]
+        // -vv makes restic report every file, which feeds the sample used later to test restores.
+        var args = ["backup", "-vv", "--tag", options.tag, "--read-concurrency", String(options.readConcurrency)]
         if let host = options.host { args += ["--host", host] }
         if options.excludeCaches { args.append("--exclude-caches") }
         if options.oneFileSystem { args.append("--one-file-system") }
@@ -238,6 +244,7 @@ public final class Restic: Sendable {
         args += options.sources
 
         let summary = SummaryBox()
+        let sampler = FileSampler()
         let e = try await executeChecked(args, repo: repo, onMessage: { m in
             switch m.message_type {
             case "status":
@@ -253,6 +260,8 @@ public final class Restic: Sendable {
             default:
                 break
             }
+        }, intercept: { line in
+            Self.sampleVerboseLine(line, into: sampler)
         })
         guard let s = summary.value, let id = s.snapshot_id else { throw e.logs.error(exitCode: e.code) }
         let packed = s.data_added_packed ?? s.data_added ?? 0
@@ -265,7 +274,28 @@ public final class Restic: Sendable {
                 deduplicatedSize: packed,
                 fileCount: s.total_files_processed ?? 0),
             duration: s.total_duration ?? 0,
-            warnings: e.logs.collectedWarnings)
+            warnings: e.logs.collectedWarnings,
+            sample: sampler.result)
+    }
+
+    /// Handles one per-file line from `backup -vv`. Returns false for lines that are not per-file reports.
+    /// Most lines are only counted; the full JSON is decoded only for the line the sampler wants.
+    /// Files above `maxSampleSize` and empty files are skipped, so test restores stay quick.
+    static func sampleVerboseLine(_ line: String, into sampler: FileSampler, maxSampleSize: Int64 = 20_000_000) -> Bool {
+        guard line.contains("\"verbose_status\"") else { return false }
+        guard sampler.shouldInspect() else { return true }
+        struct Line: Decodable { var action: String?; var item: String?; var data_size: Int64? }
+        guard let l = try? JSONDecoder().decode(Line.self, from: Data(line.utf8)),
+              ["new", "unchanged", "modified"].contains(l.action ?? ""),
+              let item = l.item, !item.isEmpty, !item.hasSuffix("/"),
+              let attrs = try? FileManager.default.attributesOfItem(atPath: item),
+              attrs[.type] as? FileAttributeType == .typeRegular else { return true }
+        // restic reports no size for unchanged files. It only calls a file unchanged when its size and
+        // modification time match, so the size on disk is the size in the snapshot.
+        let size = l.action == "unchanged" ? (attrs[.size] as? Int64 ?? 0) : (l.data_size ?? 0)
+        guard size > 0, size <= maxSampleSize else { return true }
+        sampler.keep(SampledFile(path: String(item.drop { $0 == "/" }), size: size))
+        return true
     }
 
     /// Removes snapshots outside the retention rules and frees their space.

@@ -49,6 +49,52 @@ struct SkipError: Error {}
         #expect(cmd.hasSuffix("'-p' '2222' 'me@nas' '-s' 'sftp'"))
     }
 
+    @Test func samplerSpreadsOverStream() {
+        let sampler = FileSampler(capacity: 8)
+        for i in 0..<10_000 where sampler.shouldInspect() {
+            sampler.keep(SampledFile(path: "f\(i)", size: Int64(i)))
+        }
+        let picks = sampler.result.map(\.size)
+        #expect(picks.count >= 4 && picks.count <= 8)
+        #expect(picks == picks.sorted())
+        // Evenly spread: one pick in each eighth of the stream, give or take a block.
+        #expect(picks.first! < 2_500)
+        #expect(picks.last! > 7_500)
+    }
+
+    @Test func samplerRetriesWithinBlock() {
+        let sampler = FileSampler(capacity: 4)
+        var inspected = 0
+        for i in 0..<3 where sampler.shouldInspect() {
+            inspected += 1
+            if i == 2 { sampler.keep(SampledFile(path: "f", size: 1)) }
+        }
+        // Stride is 1 while the buffer fills, so each item is its own block and only the last is kept.
+        #expect(inspected == 3)
+        #expect(sampler.result.count == 1)
+    }
+
+    @Test func samplesBackupFiles() async throws {
+        let restic = try testRestic()
+        let root = try makeTempDir()
+        let src = root.appendingPathComponent("src")
+        try FileManager.default.createDirectory(at: src, withIntermediateDirectories: true)
+        for i in 0..<20 { try "file \(i)".write(to: src.appendingPathComponent("f\(i)"), atomically: true, encoding: .utf8) }
+        let repo = ResticRepo(url: root.appendingPathComponent("repo"), password: "pw")
+        try await restic.initRepository(repo)
+        let options = CreateOptions(sources: [src.path], excludePatterns: [], host: "test")
+        let first = try await restic.backup(repo: repo, options: options, progress: { _ in })
+        let second = try await restic.backup(repo: repo, options: options, progress: { _ in })
+        for r in [first, second] {
+            #expect(!r.sample.isEmpty)
+            for f in r.sample {
+                #expect(!f.path.hasPrefix("/"))
+                let attrs = try FileManager.default.attributesOfItem(atPath: "/" + f.path)
+                #expect(attrs[.size] as? Int64 == f.size)
+            }
+        }
+    }
+
     @Test func backupRoundTrip() async throws {
         let restic = try testRestic()
         let root = try makeTempDir()

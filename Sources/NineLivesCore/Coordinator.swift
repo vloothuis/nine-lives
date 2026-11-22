@@ -375,6 +375,8 @@ public final class BackupCoordinator {
                 $0.legacyFolder = result.disk.legacyFolder
                 $0.lastBackup = end
                 $0.lastBackupStats = result.create.stats
+                $0.lastBackupSample = result.create.sample.isEmpty
+                    ? nil : BackupSample(snapshotID: result.create.archiveID, files: result.create.sample)
                 $0.lastBackupDuration = end.timeIntervalSince(start)
                 $0.storedSize = result.storedSize ?? $0.storedSize
                 $0.repositoryID = $0.repositoryID ?? result.repositoryID

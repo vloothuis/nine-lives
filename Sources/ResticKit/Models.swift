@@ -198,6 +198,8 @@ public struct CreateResult: Sendable {
     public var duration: TimeInterval
     /// Non-fatal problems, for example files that were unreadable.
     public var warnings: [String]
+    /// Files spread over the snapshot, used to test restores without listing the whole snapshot.
+    public var sample: [SampledFile] = []
 }
 
 public struct CheckResult: Sendable {

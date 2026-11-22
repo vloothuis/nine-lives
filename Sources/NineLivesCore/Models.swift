@@ -228,6 +228,23 @@ public struct VerificationSummary: Codable, Equatable, Sendable {
     public var passed: Bool { repositoryOK && problems.isEmpty }
 }
 
+/// Files spread over one snapshot, recorded while the backup ran.
+public struct BackupSample: Codable, Equatable, Sendable {
+    public var snapshotID: String
+    public var files: [SampledFile]
+
+    public init(snapshotID: String, files: [SampledFile]) {
+        self.snapshotID = snapshotID
+        self.files = files
+    }
+
+    /// Up to `count` files spread evenly over the sample.
+    public func spread(count: Int) -> [SampledFile] {
+        guard files.count > count, count > 0 else { return files }
+        return (0..<count).map { files[$0 * files.count / count] }
+    }
+}
+
 /// A server that holds a backup repository, reached over SSH.
 public struct RemoteServer: Codable, Equatable, Sendable {
     public var host: String
@@ -264,6 +281,8 @@ public struct KnownDisk: Codable, Identifiable, Equatable, Sendable {
     public var lastBackupStats: ArchiveStats?
     public var lastBackupDuration: TimeInterval?
     public var lastVerification: VerificationSummary?
+    /// Files picked during the last backup, so verification can test restores without listing the whole snapshot.
+    public var lastBackupSample: BackupSample?
     public var capacity: Int64?
     public var storedSize: Int64?
     /// Set for backups on a server instead of a disk.

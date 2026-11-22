@@ -587,14 +587,20 @@ public final class BackupEngine: Sendable {
         let check = try await recovering(repo) { try await restic.check(repo: repo, readDataSubset: "1%") }
         if !check.passed { problems += check.messages.isEmpty ? ["The backup folder has errors."] : check.messages }
 
-        status("Reading the newest backup…")
+        status("Looking up the newest backup…")
         let archives = try await restic.listArchives(repo: repo, tag: Self.tag)
         var restored = 0
         if let latest = archives.first {
-            let catalog = try await catalog(for: latest, disk: disk, on: volume) { n in
-                status("Reading the newest backup… \(n.formatted()) items")
+            let sample: [SampledFile]
+            if let recorded = disk.lastBackupSample, recorded.snapshotID == latest.id, !recorded.files.isEmpty {
+                sample = recorded.spread(count: sampleSize)
+            } else {
+                // No sample from the backup that made this snapshot, so list the snapshot to pick files.
+                let catalog = try await catalog(for: latest, disk: disk, on: volume) { n in
+                    status("Reading the newest backup… \(n.formatted()) items")
+                }
+                sample = catalog.randomFiles(count: sampleSize).map { SampledFile(path: $0.path, size: $0.size) }
             }
-            let sample = catalog.randomFiles(count: sampleSize)
             if !sample.isEmpty {
                 status("Restoring \(sample.count) test files…")
                 let temp = FileManager.default.temporaryDirectory.appendingPathComponent("NineLives-verify-\(UUID().uuidString)")
@@ -603,7 +609,11 @@ public final class BackupEngine: Sendable {
                 for entry in sample {
                     let file = temp.appendingPathComponent(entry.path)
                     let size = (try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? Int64) ?? nil
-                    if size == entry.size { restored += 1 } else { problems.append("Could not restore \(entry.name) correctly.") }
+                    if size == entry.size {
+                        restored += 1
+                    } else {
+                        problems.append("Could not restore \((entry.path as NSString).lastPathComponent) correctly.")
+                    }
                 }
             }
         } else {
