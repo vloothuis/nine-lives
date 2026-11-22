@@ -47,7 +47,7 @@ struct OnboardingView: View {
             Text("Welcome to Nine Lives").font(.largeTitle.weight(.bold))
             Text("Plug in a USB disk and your Mac is backed up. If something goes wrong, you get your files back.")
                 .multilineTextAlignment(.center).foregroundStyle(.secondary)
-            if !c.borgAvailable { MissingBorgBanner() }
+            if !c.engineAvailable { MissingEngineBanner() }
             Spacer()
             Button("Get Started") { page = .access }
                 .buttonStyle(.borderedProminent).controlSize(.large).keyboardShortcut(.defaultAction)

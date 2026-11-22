@@ -1,7 +1,7 @@
 import Foundation
 import AppKit
 import Network
-import BorgKit
+import ResticKit
 
 public struct ProgressInfo: Equatable, Sendable {
     public var files: Int64 = 0
@@ -30,7 +30,7 @@ public enum OverallStatus: Equatable, Sendable {
     case error(String)
 }
 
-/// Owns app state and decides when to back up. All borg work runs in engine tasks.
+/// Owns app state and decides when to back up. All restic work runs in engine tasks.
 @MainActor
 @Observable
 public final class BackupCoordinator {
@@ -110,26 +110,27 @@ public final class BackupCoordinator {
     public func requestNotificationPermission() async -> Bool { await notifier.requestAuthorization() }
 
     private func rebuildEngine() {
-        guard let bin = BorgBinary.locate(override: state.settings.borgPathOverride) else {
+        try? FileManager.default.removeItem(at: store.legacyBorgDirectory)
+        guard let bin = ResticBinary.locate(override: state.settings.enginePathOverride) else {
             engine = nil
             return
         }
         engine = BackupEngine(
-            borg: Borg(binary: bin, baseDirectory: store.borgBaseDirectory, ssh: sshKeys.options),
+            restic: Restic(binary: bin, cacheDirectory: store.cacheDirectory, ssh: sshKeys.options),
             secrets: secrets,
             catalogs: CatalogStore(directory: store.catalogDirectory))
     }
 
-    public var borgAvailable: Bool { engine != nil }
+    public var engineAvailable: Bool { engine != nil }
 
     // MARK: - State changes
 
     private func save() { store.save(state) }
 
     public func updateSettings(_ change: (inout BackupSettings) -> Void) {
-        let oldPath = state.settings.borgPathOverride
+        let oldPath = state.settings.enginePathOverride
         change(&state.settings)
-        if state.settings.borgPathOverride != oldPath { rebuildEngine() }
+        if state.settings.enginePathOverride != oldPath { rebuildEngine() }
         save()
     }
 
@@ -182,7 +183,7 @@ public final class BackupCoordinator {
     }
 
     public func addNewDisk(_ volume: VolumeInfo, passphrase: String?) async throws {
-        guard let engine else { throw EngineError.borgMissing }
+        guard let engine else { throw EngineError.engineMissing }
         let disk = try await engine.createDisk(on: volume, passphrase: passphrase)
         state.disks.removeAll { $0.id == disk.id }
         state.disks.append(disk)
@@ -190,7 +191,7 @@ public final class BackupCoordinator {
     }
 
     public func adoptDisk(_ volume: VolumeInfo, passphrase: String?) async throws {
-        guard let engine else { throw EngineError.borgMissing }
+        guard let engine else { throw EngineError.engineMissing }
         let disk = try await engine.adoptDisk(on: volume, passphrase: passphrase)
         state.disks.removeAll { $0.id == disk.id }
         state.disks.append(disk)
@@ -203,13 +204,13 @@ public final class BackupCoordinator {
     public func sshPublicKey() throws -> String { try sshKeys.ensureKey() }
 
     public func probeServer(_ server: RemoteServer, passphrase: String = "") async -> ServerProbe {
-        guard let engine else { return .failed(EngineError.borgMissing.localizedDescription, details: nil) }
+        guard let engine else { return .failed(EngineError.engineMissing.localizedDescription, details: nil) }
         do { try sshKeys.ensureKey() } catch { return .failed(error.localizedDescription, details: nil) }
         return await engine.probeServer(server, passphrase: passphrase)
     }
 
     public func addServer(_ server: RemoteServer, passphrase: String, existing: Bool) async throws {
-        guard let engine else { throw EngineError.borgMissing }
+        guard let engine else { throw EngineError.engineMissing }
         try sshKeys.ensureKey()
         let disk = existing
             ? try await engine.adoptServer(server, passphrase: passphrase)
@@ -330,7 +331,11 @@ public final class BackupCoordinator {
         info.bytes = p.originalSize
         info.sentBytes = p.deduplicatedSize
         info.currentPath = p.currentPath
-        if previousFiles > 0 { info.fraction = min(Double(p.fileCount) / Double(previousFiles), 0.99) }
+        if let f = p.fraction {
+            info.fraction = min(f, 0.99)
+        } else if previousFiles > 0 {
+            info.fraction = min(Double(p.fileCount) / Double(previousFiles), 0.99)
+        }
         activity = .backingUp(diskID: id, info)
     }
 
@@ -344,6 +349,17 @@ public final class BackupCoordinator {
         var ejectProblem = false
 
         do {
+            var disk = disk
+            var migrationWarning: String?
+            if disk.needsMigration {
+                let m = try await engine.migrate(disk: disk, on: volume)
+                disk = m.disk
+                migrationWarning = m.warning
+                updateDisk(disk.id) { $0 = disk }
+                if let w = m.warning {
+                    notifier.post(title: "Old backups removed", body: w, id: "migrate-\(disk.id)", sound: true)
+                }
+            }
             let result = try await engine.runBackup(disk: disk, on: volume, settings: state.settings) { [weak self] p in
                 Task { @MainActor in self?.updateProgress(p, previousFiles: previousFiles) }
             }
@@ -351,9 +367,12 @@ public final class BackupCoordinator {
             record.end = end
             record.archiveName = result.create.archiveName
             record.stats = result.create.stats
-            record.messages = result.create.warnings + result.maintenanceWarnings
+            record.messages = (migrationWarning.map { [$0] } ?? []) + result.create.warnings + result.maintenanceWarnings
             record.outcome = record.messages.isEmpty ? .success : .warning
             updateDisk(disk.id) {
+                $0.repoFolder = result.disk.repoFolder
+                $0.remote = result.disk.remote
+                $0.legacyFolder = result.disk.legacyFolder
                 $0.lastBackup = end
                 $0.lastBackupStats = result.create.stats
                 $0.lastBackupDuration = end.timeIntervalSince(start)
@@ -497,7 +516,7 @@ public final class BackupCoordinator {
     // MARK: - Restore support
 
     private func exclusive<T>(_ description: String, _ work: (BackupEngine) async throws -> T) async throws -> T {
-        guard let engine else { throw EngineError.borgMissing }
+        guard let engine else { throw EngineError.engineMissing }
         guard activity.isIdle else { throw EngineError.busy }
         activity = .working(description)
         beginKeepAwake(description)
@@ -557,5 +576,5 @@ public final class BackupCoordinator {
     }
 
     /// Technical output behind an error, if there is any.
-    nonisolated public static func details(_ error: Error) -> String? { (error as? BorgError)?.details }
+    nonisolated public static func details(_ error: Error) -> String? { (error as? ResticError)?.details }
 }

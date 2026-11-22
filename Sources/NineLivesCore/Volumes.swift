@@ -14,7 +14,7 @@ public struct VolumeInfo: Identifiable, Equatable, Sendable {
     public var isWritable: Bool
     public var busProtocol: String
 
-    /// Filesystems that handle a borg repository reliably.
+    /// Filesystems that handle a backup repository reliably.
     public var isSupportedFilesystem: Bool {
         ["apfs", "hfs", "exfat"].contains(filesystem.lowercased())
     }

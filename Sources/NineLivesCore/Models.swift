@@ -1,5 +1,5 @@
 import Foundation
-import BorgKit
+import ResticKit
 
 // MARK: - Exclusion rules
 
@@ -56,12 +56,12 @@ public struct ExcludeRule: Codable, Identifiable, Equatable, Sendable {
         ask = try c.decodeIfPresent(Bool.self, forKey: .ask) ?? false
     }
 
-    /// The borg pattern for this rule. Marker rules have none.
+    /// The restic exclude pattern for this rule. A pattern without a leading slash matches at any depth. Marker rules have none.
     public func pattern(home: String) -> String? {
         switch kind {
-        case .home: return "pp:\(home)/\(value)"
-        case .anywhere: return "fm:*/\(value)"
-        case .absolute: return "pp:\(value)"
+        case .home: return "\(home)/\(value)"
+        case .anywhere: return value
+        case .absolute: return value
         case .marker: return nil
         }
     }
@@ -115,7 +115,7 @@ public enum DefaultRules {
     /// Rules that are always applied and not shown as choices.
     public static let always: [ExcludeRule] = [
         ExcludeRule(id: "own-data", title: "Nine Lives working files", detail: "",
-                    kind: .home, value: "Library/Application Support/Nine Lives/Borg"),
+                    kind: .home, value: "Library/Application Support/Nine Lives/Restic"),
         ExcludeRule(id: "own-catalog", title: "Nine Lives catalogs", detail: "",
                     kind: .home, value: "Library/Application Support/Nine Lives/Catalogs"),
     ]
@@ -134,7 +134,7 @@ public struct BackupSettings: Codable, Equatable, Sendable {
     public var remindAfterDays: Int
     public var verifyEveryDays: Int
     public var pauseOnLowBattery: Bool
-    public var borgPathOverride: String?
+    public var enginePathOverride: String?
     /// Rules the user has already answered, so Nine Lives does not ask again.
     public var answeredRuleIDs: [String]
     /// Answers for single items: true backs the path up, false skips it. They win over the rules.
@@ -150,7 +150,7 @@ public struct BackupSettings: Codable, Equatable, Sendable {
         remindAfterDays: Int = 7,
         verifyEveryDays: Int = 30,
         pauseOnLowBattery: Bool = true,
-        borgPathOverride: String? = nil,
+        enginePathOverride: String? = nil,
         answeredRuleIDs: [String] = [],
         pathChoices: [String: Bool] = [:]
     ) {
@@ -163,7 +163,7 @@ public struct BackupSettings: Codable, Equatable, Sendable {
         self.remindAfterDays = remindAfterDays
         self.verifyEveryDays = verifyEveryDays
         self.pauseOnLowBattery = pauseOnLowBattery
-        self.borgPathOverride = borgPathOverride
+        self.enginePathOverride = enginePathOverride
         self.answeredRuleIDs = answeredRuleIDs
         self.pathChoices = pathChoices
     }
@@ -181,22 +181,23 @@ public struct BackupSettings: Codable, Equatable, Sendable {
         remindAfterDays = try c.decodeIfPresent(Int.self, forKey: .remindAfterDays) ?? d.remindAfterDays
         verifyEveryDays = try c.decodeIfPresent(Int.self, forKey: .verifyEveryDays) ?? d.verifyEveryDays
         pauseOnLowBattery = try c.decodeIfPresent(Bool.self, forKey: .pauseOnLowBattery) ?? d.pauseOnLowBattery
-        borgPathOverride = try c.decodeIfPresent(String.self, forKey: .borgPathOverride)
+        // An override saved by older versions points at borg, so it is not read here.
+        enginePathOverride = try c.decodeIfPresent(String.self, forKey: .enginePathOverride)
         answeredRuleIDs = try c.decodeIfPresent([String].self, forKey: .answeredRuleIDs) ?? []
         pathChoices = try c.decodeIfPresent([String: Bool].self, forKey: .pathChoices) ?? [:]
     }
 
     public func excludePatterns(home: String = NSHomeDirectory()) -> [String] {
-        let skipped = pathChoices.filter { !$0.value }.keys.sorted().map { "pp:" + $0 }
+        let skipped = pathChoices.filter { !$0.value }.keys.sorted()
         return (rules.filter(\.enabled) + DefaultRules.always).compactMap { $0.pattern(home: home) } + skipped
     }
 
     /// Paths the user chose to back up although a rule skips them.
     public var includePatterns: [String] {
-        pathChoices.filter(\.value).keys.sorted().map { "pp:" + $0 }
+        pathChoices.filter(\.value).keys.sorted()
     }
 
-    /// File names that make borg skip the folder that holds them.
+    /// File names that make restic skip the folder that holds them.
     public var excludeMarkers: [String] {
         rules.filter { $0.enabled && $0.kind == .marker }.map(\.value)
     }
@@ -215,6 +216,10 @@ public struct BackupSettings: Codable, Equatable, Sendable {
 
 // MARK: - Disks and history
 
+public enum RepositoryFormat: String, Codable, Sendable {
+    case borg, restic
+}
+
 public struct VerificationSummary: Codable, Equatable, Sendable {
     public var date: Date
     public var repositoryOK: Bool
@@ -230,23 +235,16 @@ public struct RemoteServer: Codable, Equatable, Sendable {
     public var port: Int
     /// Folder on the server. A path without a leading slash is relative to the user's home folder.
     public var path: String
-    /// Name or path of borg on the server, if it is not `borg` on the default PATH.
-    public var borgPath: String?
 
-    public init(host: String, user: String, port: Int = 22, path: String, borgPath: String? = nil) {
+    public init(host: String, user: String, port: Int = 22, path: String) {
         self.host = host
         self.user = user
         self.port = port
         self.path = path
-        self.borgPath = borgPath
     }
 
-    /// The `ssh://` location that borg understands.
-    public var location: String {
-        let p = path.hasPrefix("/") ? path : "/./" + path
-        let h = host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
-        return "ssh://\(user)@\(h):\(port)\(p)"
-    }
+    /// The location as restic reaches it over SFTP.
+    public var location: SFTPLocation { SFTPLocation(host: host, port: port, user: user, path: path) }
 
     public var display: String { "\(user)@\(host)" }
 
@@ -259,7 +257,7 @@ public struct KnownDisk: Codable, Identifiable, Equatable, Sendable {
     public var name: String
     public var mode: EncryptionMode
     public var diskEncrypted: Bool
-    /// Location of the borg repository, relative to the volume root.
+    /// Location of the repository, relative to the volume root.
     public var repoFolder: String
     public var addedAt: Date
     public var lastBackup: Date?
@@ -272,10 +270,15 @@ public struct KnownDisk: Codable, Identifiable, Equatable, Sendable {
     public var remote: RemoteServer?
     /// When the last scheduled attempt failed. Used to wait before trying again.
     public var lastFailure: Date?
-    /// The borg repository ID seen when the disk was added. A different ID means the repository was replaced.
+    /// The repository ID seen when the disk was added. A different ID means the repository was replaced.
     public var repositoryID: String?
+    /// Storage format. Missing in state from versions that used borg.
+    public var format: RepositoryFormat?
+    /// While switching from borg: the folder of the old borg backups, removed after the first restic backup.
+    public var legacyFolder: String?
 
     public var isRemote: Bool { remote != nil }
+    public var needsMigration: Bool { format != .restic }
 
     public init(
         id: String, name: String, mode: EncryptionMode, diskEncrypted: Bool, repoFolder: String,
@@ -288,6 +291,7 @@ public struct KnownDisk: Codable, Identifiable, Equatable, Sendable {
         self.repoFolder = repoFolder
         self.addedAt = addedAt
         self.capacity = capacity
+        self.format = .restic
     }
 
     public init(server: RemoteServer, name: String? = nil) {

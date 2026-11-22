@@ -14,26 +14,25 @@ swift build -c release --arch "$ARCH"
 BIN="$(swift build -c release --arch "$ARCH" --show-bin-path)/NineLives"
 
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/borg"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/NineLives"
 sed -e "s/__VERSION__/$VERSION/g" -e "s/__BUILD__/$BUILD/g" Resources/Info.plist > "$APP/Contents/Info.plist"
 [ -f Resources/AppIcon.icns ] && cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
-BORG="vendor/borg-$ARCH/borg"
-if [ -x "$BORG" ]; then
-  cp "$BORG" "$APP/Contents/Resources/borg/borg"
+RESTIC="vendor/restic-$ARCH/restic"
+if [ -x "$RESTIC" ]; then
+  cp "$RESTIC" "$APP/Contents/Resources/restic"
   cp LICENSE "$APP/Contents/Resources/LICENSE.txt"
 else
-  rmdir "$APP/Contents/Resources/borg"
-  echo "Note: $BORG not found. Run scripts/fetch-borg.sh to bundle borg."
-  echo "      Without it the app uses a borg installed by Homebrew."
+  echo "Note: $RESTIC not found. Run scripts/fetch-restic.sh to bundle restic."
+  echo "      Without it the app uses a restic installed by Homebrew."
 fi
 
 if [ "$IDENTITY" = "-" ]; then
   codesign --force --deep --sign - "$APP"
 else
-  [ -x "$APP/Contents/Resources/borg/borg" ] && codesign --force --options runtime \
-    --entitlements Resources/borg.entitlements --sign "$IDENTITY" "$APP/Contents/Resources/borg/borg"
+  [ -x "$APP/Contents/Resources/restic" ] && codesign --force --options runtime \
+    --sign "$IDENTITY" "$APP/Contents/Resources/restic"
   codesign --force --options runtime --sign "$IDENTITY" "$APP"
 fi
 echo "Built $APP ($VERSION, build $BUILD)"

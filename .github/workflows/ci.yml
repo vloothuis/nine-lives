@@ -8,6 +8,6 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-      - run: brew install borgbackup
+      - run: brew install restic
       - run: swift build
       - run: swift test

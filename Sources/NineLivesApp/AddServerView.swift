@@ -14,7 +14,6 @@ struct AddServerFlow: View {
     @State private var user = NSUserName()
     @State private var port = "22"
     @State private var path = RemoteServer.defaultPath
-    @State private var borgPath = ""
     @State private var showAdvanced = false
     @State private var publicKey = ""
     @State private var passphrase = PassphraseGenerator.generate()
@@ -27,8 +26,7 @@ struct AddServerFlow: View {
             host: host.trimmingCharacters(in: .whitespaces),
             user: user.trimmingCharacters(in: .whitespaces),
             port: Int(port) ?? 22,
-            path: path.trimmingCharacters(in: .whitespaces),
-            borgPath: borgPath.trimmingCharacters(in: .whitespaces).isEmpty ? nil : borgPath.trimmingCharacters(in: .whitespaces))
+            path: path.trimmingCharacters(in: .whitespaces))
     }
 
     private var formValid: Bool {
@@ -61,7 +59,7 @@ struct AddServerFlow: View {
     private var form: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Back up to a server").font(.title2.weight(.semibold))
-            Text("Use a server that you reach over SSH, for example a NAS, a rented server or a backup service. The server needs borg installed. Your backups are always encrypted before they leave this Mac.")
+            Text("Use a server that you reach over SSH, for example a NAS, a rented server or a backup service. The server needs SFTP, which almost every SSH server has. Your backups are always encrypted before they leave this Mac.")
                 .foregroundStyle(.secondary)
             Form {
                 TextField("Server", text: $host, prompt: Text("nas.local or backup.example.com"))
@@ -69,7 +67,6 @@ struct AddServerFlow: View {
                 TextField("Folder on the server", text: $path)
                 DisclosureGroup("Advanced", isExpanded: $showAdvanced) {
                     TextField("Port", text: $port)
-                    TextField("borg on the server", text: $borgPath, prompt: Text("borg"))
                 }
             }
             .formStyle(.columns)
@@ -108,8 +105,8 @@ struct AddServerFlow: View {
         case .unreachable(let m):
             error = ShownError("Could not reach the server.", details: m)
             step = .form
-        case .borgMissing:
-            error = ShownError("borg is not installed on the server, or it is not on its default path. Install borg there, or enter its full path under Advanced.")
+        case .sftpMissing:
+            error = ShownError("The server does not offer SFTP. Turn on the SFTP subsystem in the server's SSH settings and try again.")
             step = .form
         case .failed(let m, let d):
             error = ShownError(m, details: d)
@@ -142,7 +139,7 @@ struct AddServerFlow: View {
                 Button("Copy Key") { copyToPasteboard(publicKey) }
                 Button("Copy Command") { copyToPasteboard("mkdir -p ~/.ssh && echo '\(publicKey)' >> ~/.ssh/authorized_keys") }
             }
-            Text("Backup services such as BorgBase or rsync.net have a page for SSH keys instead. Paste the key there.")
+            Text("Backup services such as rsync.net or Hetzner Storage Box have a page for SSH keys instead. Paste the key there.")
                 .font(.callout).foregroundStyle(.secondary)
             Spacer(minLength: 0)
             HStack {

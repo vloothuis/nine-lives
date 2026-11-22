@@ -1,6 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
-import BorgKit
+import ResticKit
 import NineLivesCore
 
 struct RestoreView: View {

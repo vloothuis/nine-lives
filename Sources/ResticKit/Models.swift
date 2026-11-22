@@ -1,9 +1,10 @@
 import Foundation
 
+/// How a backup is protected. The raw values come from the borg era and stay for saved state.
 public enum EncryptionMode: String, Codable, Sendable, CaseIterable {
-    /// Integrity protection only. Used when the disk itself is encrypted.
+    /// The disk itself is encrypted. The repository password is generated and stored next to the backups.
     case authenticated = "authenticated-blake2"
-    /// Full encryption with a passphrase. Used on unencrypted disks.
+    /// The user's recovery passphrase is the repository password.
     case repokey = "repokey-blake2"
 }
 
@@ -33,31 +34,50 @@ public struct Retention: Codable, Equatable, Sendable {
     }
 }
 
-/// A repository plus the passphrase needed to open it. Authenticated repos use an empty passphrase.
-public struct BorgRepo: Sendable {
-    public var url: URL
-    public var passphrase: String
-    /// For a repository on another machine: `ssh://user@host:port/path`. Overrides `url`.
-    public var remote: String?
-    /// Name or path of the borg executable on the server, when it is not `borg` on the default PATH.
-    public var remotePath: String?
+/// A server reached over SSH, as restic needs it.
+public struct SFTPLocation: Sendable, Equatable {
+    public var host: String
+    public var port: Int
+    public var user: String
+    /// Folder on the server. Without a leading slash it is relative to the user's home folder.
+    public var path: String
 
-    public init(url: URL, passphrase: String = "") {
-        self.url = url
-        self.passphrase = passphrase
+    public init(host: String, port: Int, user: String, path: String) {
+        self.host = host
+        self.port = port
+        self.user = user
+        self.path = path
     }
 
-    public init(remote: String, remotePath: String? = nil, passphrase: String = "") {
+    /// The repository location in restic's `sftp:` syntax.
+    var repository: String {
+        let h = host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
+        return "sftp:\(user)@\(h):\(path)"
+    }
+}
+
+/// A repository plus the password needed to open it.
+public struct ResticRepo: Sendable {
+    public var url: URL
+    public var password: String
+    public var remote: SFTPLocation?
+
+    public init(url: URL, password: String) {
+        self.url = url
+        self.password = password
+    }
+
+    public init(remote: SFTPLocation, password: String) {
         self.url = URL(fileURLWithPath: "/")
         self.remote = remote
-        self.remotePath = remotePath
-        self.passphrase = passphrase
+        self.password = password
     }
 
     public var isRemote: Bool { remote != nil }
+    var location: String { remote?.repository ?? url.path }
 }
 
-/// How borg reaches a server: a dedicated key and known hosts file.
+/// How restic and plain ssh reach a server: a dedicated key and known hosts file.
 public struct SSHOptions: Sendable {
     public var keyFile: URL
     public var knownHostsFile: URL
@@ -74,10 +94,11 @@ public struct SSHOptions: Sendable {
          "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=6"]
     }
 
-    /// Value for BORG_RSH.
-    var command: String {
+    /// Value for restic's `sftp.command` option.
+    func sftpCommand(_ remote: SFTPLocation) -> String {
         func q(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
-        return (["/usr/bin/ssh"] + arguments.map(q)).joined(separator: " ")
+        let parts = ["/usr/bin/ssh"] + arguments + ["-p", String(remote.port), "\(remote.user)@\(remote.host)", "-s", "sftp"]
+        return parts.map(q).joined(separator: " ")
     }
 }
 
@@ -95,6 +116,7 @@ public struct ArchiveStats: Codable, Equatable, Sendable {
     }
 }
 
+/// One snapshot. `id` is the full snapshot ID, `name` the short ID.
 public struct ArchiveInfo: Identifiable, Equatable, Hashable, Sendable {
     public var id: String
     public var name: String
@@ -106,15 +128,6 @@ public struct ArchiveInfo: Identifiable, Equatable, Hashable, Sendable {
     }
 }
 
-public struct RepositoryInfo: Sendable {
-    public var id: String
-    public var encryption: String
-    /// Disk space used by the repository after compression and deduplication.
-    public var storedSize: Int64
-    /// Total size of all archives before deduplication.
-    public var totalOriginalSize: Int64
-}
-
 public enum ArchiveItemType: String, Codable, Sendable {
     case file = "-"
     case directory = "d"
@@ -124,30 +137,36 @@ public enum ArchiveItemType: String, Codable, Sendable {
 }
 
 public struct ArchiveItem: Sendable, Equatable {
+    /// Path without a leading slash, for example `Users/me/a.txt`.
     public var path: String
     public var type: ArchiveItemType
     public var size: Int64
     public var modified: Date?
-    public var isHealthy: Bool
 }
 
 public struct CreateProgress: Sendable {
     public var fileCount: Int64
     public var originalSize: Int64
-    public var compressedSize: Int64
+    /// Bytes added to the repository so far. restic only reports this at the end, so it is 0 while running.
     public var deduplicatedSize: Int64
+    /// Share of the work done, from 0 to 1, when restic has finished counting.
+    public var fraction: Double?
     public var currentPath: String
 }
 
 public struct CreateOptions: Sendable {
     public var sources: [String]
     public var excludePatterns: [String]
-    /// Borg patterns for paths that stay in the backup although an exclude pattern matches them.
+    /// Paths that stay in the backup although an exclude pattern matches them. Passed to restic as negated excludes.
     public var includePatterns: [String]
     public var excludeCaches: Bool
     public var oneFileSystem: Bool
     public var excludeIfPresent: [String]
-    public var compression: String
+    /// Stable host name, so restic finds the previous snapshot even when the Mac is renamed.
+    public var host: String?
+    public var tag: String
+    /// How many files restic reads at the same time.
+    public var readConcurrency: Int
 
     public init(
         sources: [String],
@@ -156,7 +175,9 @@ public struct CreateOptions: Sendable {
         excludeCaches: Bool = true,
         oneFileSystem: Bool = true,
         excludeIfPresent: [String] = [".nobackup"],
-        compression: String = "auto,zstd,3"
+        host: String? = nil,
+        tag: String = "ninelives",
+        readConcurrency: Int = 8
     ) {
         self.sources = sources
         self.excludePatterns = excludePatterns
@@ -164,7 +185,9 @@ public struct CreateOptions: Sendable {
         self.excludeCaches = excludeCaches
         self.oneFileSystem = oneFileSystem
         self.excludeIfPresent = excludeIfPresent
-        self.compression = compression
+        self.host = host
+        self.tag = tag
+        self.readConcurrency = readConcurrency
     }
 }
 
@@ -173,7 +196,7 @@ public struct CreateResult: Sendable {
     public var archiveName: String
     public var stats: ArchiveStats
     public var duration: TimeInterval
-    /// Non-fatal problems, for example files that were unreadable or changed while being read.
+    /// Non-fatal problems, for example files that were unreadable.
     public var warnings: [String]
 }
 

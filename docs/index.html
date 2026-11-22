@@ -103,7 +103,7 @@
         <div class="feature"><h3>Checked every month</h3><p>Nine Lives restores real files from your backups to prove they can be read.</p></div>
         <div class="feature"><h3>Like Time Machine</h3><p>Keeps hourly, daily, weekly and monthly versions, and skips caches and other files you do not need.</p></div>
         <div class="feature"><h3>Several disks</h3><p>Rotate disks, keep one at the office, and add a server on top. Each has its own backup.</p></div>
-        <div class="feature"><h3>No lock-in</h3><p>Built on <a href="https://www.borgbackup.org">BorgBackup</a>. Your backups stay readable with plain <code>borg</code>, and a <code>HOW TO RESTORE.txt</code> sits next to them.</p></div>
+        <div class="feature"><h3>No lock-in</h3><p>Built on <a href="https://restic.net">restic</a>. Your backups stay readable with plain <code>restic</code>, and a <code>HOW TO RESTORE.txt</code> sits next to them.</p></div>
         <div class="feature"><h3>Free and open</h3><p>BSD licensed, no account, no tracking. Read every line of it on GitHub.</p></div>
       </div>
     </section>
@@ -126,9 +126,9 @@
       <details><summary>Does it back up everything?</summary>
         <p>It backs up your home folder. To include Mail, Photos and other protected data, give Nine Lives Full Disk Access in System Settings, Privacy &amp; Security. The app guides you through it.</p></details>
       <details><summary>What do I need on my server?</summary>
-        <p>A machine you can reach over SSH with <code>borg</code> installed. Nine Lives creates its own SSH key and shows you the one line to add to the server.</p></details>
+        <p>A machine you can reach over SSH with SFTP, which almost every SSH server has. Nine Lives creates its own SSH key and shows you the one line to add to the server.</p></details>
       <details><summary>What if I lose my disk and my Mac?</summary>
-        <p>Install Nine Lives on a new Mac, add the disk or server, and enter your recovery passphrase. Or use plain <code>borg</code>, as described in <code>HOW TO RESTORE.txt</code>.</p></details>
+        <p>Install Nine Lives on a new Mac, add the disk or server, and enter your recovery passphrase. Or use plain <code>restic</code>, as described in <code>HOW TO RESTORE.txt</code>.</p></details>
     </section>
 
     <div class="cta">
@@ -139,7 +139,7 @@
   </main>
 
   <footer>
-    Nine Lives is BSD licensed and built on BorgBackup.
+    Nine Lives is BSD licensed and built on restic.
     <a href="https://github.com/vloothuis/nine-lives">Source</a> ·
     <a href="https://github.com/vloothuis/nine-lives/releases">All releases</a> ·
     <a href="https://github.com/vloothuis/nine-lives/issues">Report a problem</a>

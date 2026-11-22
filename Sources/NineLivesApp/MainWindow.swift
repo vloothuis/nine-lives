@@ -25,15 +25,15 @@ struct MainWindow: View {
                 }
             }
             .overlay(alignment: .bottom) {
-                if !c.borgAvailable { MissingBorgBanner() }
+                if !c.engineAvailable { MissingEngineBanner() }
             }
         }
     }
 }
 
-struct MissingBorgBanner: View {
+struct MissingEngineBanner: View {
     var body: some View {
-        Label("The backup engine (borg) is missing. Reinstall Nine Lives or choose borg in Settings.", systemImage: "exclamationmark.triangle.fill")
+        Label("The backup engine (restic) is missing. Reinstall Nine Lives or choose restic in Settings.", systemImage: "exclamationmark.triangle.fill")
             .padding(10)
             .background(.orange.opacity(0.2), in: RoundedRectangle(cornerRadius: 8))
             .padding()
