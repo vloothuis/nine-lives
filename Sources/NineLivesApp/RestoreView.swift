@@ -5,6 +5,7 @@ import NineLivesCore
 
 struct RestoreView: View {
     @Environment(BackupCoordinator.self) private var c
+    @Environment(Navigation.self) private var nav
 
     @State private var diskID: String?
     @State private var archives: [ArchiveInfo] = []
@@ -48,7 +49,20 @@ struct RestoreView: View {
         .navigationTitle("Restore")
         .searchable(text: $search, prompt: "Search the backup")
         .onChange(of: search) { _, _ in reload() }
-        .task(id: connectedDisks.map(\.id)) { await loadDisk() }
+        .task(id: connectedDisks.map(\.id)) {
+            if let id = nav.restoreDiskID {
+                nav.restoreDiskID = nil
+                diskID = id
+            }
+            await loadDisk()
+        }
+        .onChange(of: nav.restoreDiskID) { _, id in
+            guard let id else { return }
+            nav.restoreDiskID = nil
+            guard id != diskID else { return }
+            diskID = id
+            Task { await loadDisk() }
+        }
         .confirmationDialog("Put the items back where they were?", isPresented: $confirmOriginal) {
             Button("Replace Current Files", role: .destructive) { restore(.originalLocation) }
         } message: {

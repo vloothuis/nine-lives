@@ -315,8 +315,12 @@ public final class BackupEngine: Sendable {
         return disk
     }
 
+    static func readmeURL(near repoURL: URL) -> URL {
+        repoURL.deletingLastPathComponent().appendingPathComponent("HOW TO RESTORE.txt")
+    }
+
     private func writeReadme(near repoURL: URL, mode: EncryptionMode) {
-        let readme = repoURL.deletingLastPathComponent().appendingPathComponent("HOW TO RESTORE.txt")
+        let readme = Self.readmeURL(near: repoURL)
         let passwordLine = mode == .repokey
             ? "This backup is encrypted. The password is the recovery passphrase that Nine Lives showed you when you set up this disk."
             : "The password is in the file \"\(repoURL.lastPathComponent) password.txt\" next to the backup folder. The disk itself is encrypted."
@@ -335,6 +339,7 @@ public final class BackupEngine: Sendable {
         Do not edit or delete files inside the backup folders by hand.
         """
         try? text.write(to: readme, atomically: true, encoding: .utf8)
+        OpenWith.set(on: readme)
     }
 
     // MARK: - Switching from borg
@@ -516,6 +521,8 @@ public final class BackupEngine: Sendable {
         } catch {
             warnings.append("Removing the old backups failed: \(error.localizedDescription). Nine Lives tries again after the next backup.")
         }
+        // Keeps the readme opening this copy of the app, also after it was moved or updated.
+        if !repo.isRemote { OpenWith.set(on: Self.readmeURL(near: repo.url)) }
         let stored = try? await restic.storedSize(repo: try self.repo(for: updated, on: volume))
         return BackupRunResult(create: created, storedSize: stored, repositoryID: id, maintenanceWarnings: warnings, disk: updated)
     }

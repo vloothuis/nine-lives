@@ -28,11 +28,28 @@ enum Pane: String, CaseIterable, Identifiable {
 @MainActor @Observable
 final class Navigation {
     var pane: Pane = .overview
+    /// Disk to show in Restore, set when a backup disk's readme is opened.
+    var restoreDiskID: String?
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    var openMainWindow: (() -> Void)?
+    var openMainWindow: (() -> Void)? { didSet { flushOpenedFiles() } }
+    var openFile: ((URL) -> Void)? { didSet { flushOpenedFiles() } }
     var launchedAtLogin = false
+    /// Files opened before the app finished setting up.
+    private var pendingFiles: [URL] = []
+
+    /// Finder sends the backup disk's `HOW TO RESTORE.txt` here when it is double-clicked.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        pendingFiles += urls
+        flushOpenedFiles()
+    }
+
+    private func flushOpenedFiles() {
+        guard let openFile, openMainWindow != nil, let last = pendingFiles.last else { return }
+        pendingFiles = []
+        openFile(last)
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let event = NSAppleEventManager.shared().currentAppleEvent
@@ -62,6 +79,7 @@ struct NineLivesApp: App {
         } label: {
             MenuBarLabel(delegate: delegate)
                 .environment(coordinator)
+                .environment(navigation)
         }
         .menuBarExtraStyle(.window)
 
@@ -94,6 +112,7 @@ struct NineLivesApp: App {
 
 struct MenuBarLabel: View {
     @Environment(BackupCoordinator.self) private var coordinator
+    @Environment(Navigation.self) private var navigation
     @Environment(\.openWindow) private var openWindow
     let delegate: AppDelegate
 
@@ -113,6 +132,15 @@ struct MenuBarLabel: View {
                 coordinator.onFullDiskAccessLost = {
                     openWindow(id: "main")
                     NSApp.activate(ignoringOtherApps: true)
+                }
+                delegate.openFile = { file in
+                    if let disk = coordinator.disk(holding: file) {
+                        navigation.restoreDiskID = disk.id
+                        navigation.pane = .restore
+                    } else {
+                        navigation.pane = .disks
+                    }
+                    openWindow(id: "main")
                 }
                 coordinator.start()
                 if !coordinator.state.onboardingComplete || !delegate.launchedAtLogin {

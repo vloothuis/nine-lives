@@ -14,6 +14,15 @@
     <key>LSMinimumSystemVersion</key><string>15.0</string>
     <key>LSUIElement</key><true/>
     <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key><string>Nine Lives restore instructions</string>
+            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>LSHandlerRank</key><string>None</string>
+            <key>LSItemContentTypes</key><array><string>public.plain-text</string></array>
+        </dict>
+    </array>
     <key>NSHumanReadableCopyright</key><string>BSD 3-Clause License</string>
     <key>NSRemovableVolumesUsageDescription</key>
     <string>Nine Lives saves your backups on removable disks.</string>
