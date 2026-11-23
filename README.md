@@ -27,7 +27,7 @@ Your backups are always encrypted before they leave your Mac. Nine Lives shows y
 - Keeps hourly, daily, weekly and monthly backups, like Time Machine, and skips caches and other files you do not need.
 - Checks your backups every month by restoring real files from them.
 - Restore browser without extra software (no macFUSE).
-- Backups stay readable with plain `restic`. A `HOW TO RESTORE.txt` is written next to them.
+- Backups stay readable with plain `restic`. A `HOW TO RESTORE.txt` is written next to them. On a Mac with Nine Lives, double-clicking it opens Restore for that disk.
 - Backups made with older versions (borg) are replaced automatically on the first backup. The recovery passphrase stays the same.
 
 ## Install
