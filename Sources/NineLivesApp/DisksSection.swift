@@ -1,35 +1,23 @@
 import SwiftUI
 import NineLivesCore
 
-struct DisksView: View {
+/// The backup disks on the main window, each with its own actions.
+struct DisksSection: View {
     @Environment(BackupCoordinator.self) private var c
-    @State private var showAdd = false
     @State private var forgetting: KnownDisk?
     @State private var showingPassphrase: KnownDisk?
     @State private var ejectError: String?
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                if c.state.disks.isEmpty {
-                    ContentUnavailableView("No backup disks", systemImage: "externaldrive.badge.plus",
-                                           description: Text("Add a USB disk to start backing up."))
-                        .frame(maxWidth: .infinity)
-                }
-                ForEach(c.state.disks) { disk in diskCard(disk) }
-                if c.state.disks.count == 1 {
-                    Label("Tip: add a second disk and keep it somewhere else, for example at work. Nine Lives backs up whichever disk is connected.",
-                          systemImage: "lightbulb")
-                        .font(.callout).foregroundStyle(.secondary)
-                }
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Backup disks").font(.headline)
+            ForEach(c.state.disks) { disk in diskCard(disk) }
+            if c.state.disks.count == 1 {
+                Label("Tip: add a second disk and keep it somewhere else, for example at work. Nine Lives backs up whichever disk is connected.",
+                      systemImage: "lightbulb")
+                    .font(.callout).foregroundStyle(.secondary)
             }
-            .padding(24)
         }
-        .navigationTitle("Disks")
-        .toolbar {
-            ToolbarItem { Button { showAdd = true } label: { Label("Add Disk", systemImage: "plus") } }
-        }
-        .sheet(isPresented: $showAdd) { AddDiskSheet() }
         .sheet(item: $showingPassphrase) { disk in PassphraseSheet(disk: disk) }
         .confirmationDialog("Forget \(forgetting?.name ?? "disk")?", isPresented: Binding(
             get: { forgetting != nil }, set: { if !$0 { forgetting = nil } }), presenting: forgetting) { disk in
@@ -50,17 +38,19 @@ struct DisksView: View {
                 HStack(spacing: 12) {
                     Image(systemName: disk.symbol(connected: connected)).font(.title)
                         .foregroundStyle(connected ? Color.accentColor : .secondary)
-                    VStack(alignment: .leading) {
+                        .frame(width: 32)
+                    VStack(alignment: .leading, spacing: 2) {
                         Text(disk.name).font(.title3.weight(.semibold))
-                        Text(!c.monitor.loaded ? "Checking…" : connected ? disk.onlineText : disk.offlineText).font(.callout).foregroundStyle(.secondary)
+                        Text(!c.monitor.loaded ? "Checking…" : connected ? disk.onlineText : disk.offlineText)
+                            .font(.callout).foregroundStyle(.secondary)
                     }
                     Spacer()
                     if connected {
                         Button("Back Up Now") { c.startBackup(diskID: disk.id, trigger: .manual) }
                             .disabled(!c.activity.isIdle || !c.engineAvailable)
                     }
+                    actionsMenu(disk, connected: connected)
                 }
-                Divider()
                 Grid(alignment: .leading, horizontalSpacing: 20, verticalSpacing: 6) {
                     row("Last backup", disk.lastBackup.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? "Never")
                     if let s = disk.storedSize { row("Backups use", Fmt.bytes(s)) }
@@ -74,27 +64,39 @@ struct DisksView: View {
                     } ?? "Not yet")
                 }
                 .font(.callout)
-                HStack {
-                    Button("Check Backups") { c.startVerification(diskID: disk.id) }
-                        .disabled(!connected || !c.activity.isIdle)
-                    if connected, !disk.isRemote {
-                        Button("Eject") {
-                            do { try c.eject(disk) } catch { ejectError = error.localizedDescription }
-                        }.disabled(!c.activity.isIdle)
-                    }
-                    if disk.mode == .repokey {
-                        Button("Show Recovery Passphrase…") { showingPassphrase = disk }
-                    }
-                    Spacer()
-                    Button("Forget…", role: .destructive) { forgetting = disk }
-                }
+                .padding(.leading, 44)
                 if let v = disk.lastVerification, !v.passed {
                     ForEach(Array(v.problems.enumerated()), id: \.offset) { _, p in
                         Label(p, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange).font(.callout)
                     }
+                    .padding(.leading, 44)
                 }
             }
         }
+    }
+
+    private func actionsMenu(_ disk: KnownDisk, connected: Bool) -> some View {
+        Menu {
+            Button("Check Backups") { c.startVerification(diskID: disk.id) }
+                .disabled(!connected || !c.activity.isIdle)
+            if connected, !disk.isRemote {
+                Button("Eject") {
+                    do { try c.eject(disk) } catch { ejectError = error.localizedDescription }
+                }
+                .disabled(!c.activity.isIdle)
+            }
+            if disk.mode == .repokey {
+                Button("Show Recovery Passphrase…") { showingPassphrase = disk }
+            }
+            Divider()
+            Button("Forget Disk…", role: .destructive) { forgetting = disk }
+        } label: {
+            Image(systemName: "gearshape")
+        }
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Options for \(disk.name)")
+        .accessibilityLabel("Options for \(disk.name)")
     }
 
     private func row(_ label: String, _ value: String) -> some View {

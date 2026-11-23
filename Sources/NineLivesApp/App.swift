@@ -2,32 +2,15 @@ import SwiftUI
 import AppKit
 import NineLivesCore
 
-enum Pane: String, CaseIterable, Identifiable {
-    case overview, restore, disks, activity, settings
-    var id: String { rawValue }
-    var title: String {
-        switch self {
-        case .overview: "Overview"
-        case .restore: "Restore"
-        case .disks: "Disks"
-        case .activity: "Activity"
-        case .settings: "Settings"
-        }
-    }
-    var symbol: String {
-        switch self {
-        case .overview: "heart.text.square"
-        case .restore: "clock.arrow.circlepath"
-        case .disks: "externaldrive"
-        case .activity: "list.bullet.rectangle"
-        case .settings: "gearshape"
-        }
-    }
+/// Ids of the app's windows.
+enum WindowID {
+    static let main = "main"
+    static let restore = "restore"
+    static let activity = "activity"
 }
 
 @MainActor @Observable
 final class Navigation {
-    var pane: Pane = .overview
     /// Disk to show in Restore, set when a backup disk's readme is opened.
     var restoreDiskID: String?
 }
@@ -83,28 +66,61 @@ struct NineLivesApp: App {
         }
         .menuBarExtraStyle(.window)
 
-        Window("Nine Lives", id: "main") {
+        Window("Nine Lives", id: WindowID.main) {
             MainWindow()
                 .environment(coordinator)
                 .environment(navigation)
-                .frame(minWidth: 780, minHeight: 520)
-                .onAppear {
-                    NSApp.setActivationPolicy(.regular)
-                    NSApp.activate()
-                }
-                .onDisappear {
-                    DispatchQueue.main.async {
-                        if !NSApp.windows.contains(where: { $0.isVisible && $0.canBecomeMain }) {
-                            NSApp.setActivationPolicy(.accessory)
-                        }
-                    }
-                }
+                .frame(minWidth: 620, minHeight: 480)
+                .showsInDock()
         }
         .defaultLaunchBehavior(.suppressed)
-        .defaultSize(width: 900, height: 620)
+        .defaultSize(width: 760, height: 640)
         .commands {
             CommandGroup(replacing: .appInfo) {
                 Button("About Nine Lives") { AboutPanel.show() }
+            }
+        }
+
+        Window("Restore Files", id: WindowID.restore) {
+            RestoreView()
+                .environment(coordinator)
+                .environment(navigation)
+                .frame(minWidth: 720, minHeight: 460)
+                .showsInDock()
+        }
+        .defaultLaunchBehavior(.suppressed)
+        .defaultSize(width: 900, height: 620)
+
+        Window("Activity", id: WindowID.activity) {
+            ActivityView()
+                .environment(coordinator)
+                .frame(minWidth: 640, minHeight: 400)
+                .showsInDock()
+        }
+        .defaultLaunchBehavior(.suppressed)
+        .defaultSize(width: 820, height: 560)
+
+        Settings {
+            SettingsView()
+                .environment(coordinator)
+                .frame(width: 560, height: 620)
+                .showsInDock()
+        }
+    }
+}
+
+extension View {
+    /// Shows the app in the Dock while this window is open. Nine Lives is a menu bar app otherwise.
+    func showsInDock() -> some View {
+        onAppear {
+            NSApp.setActivationPolicy(.regular)
+            NSApp.activate()
+        }
+        .onDisappear {
+            DispatchQueue.main.async {
+                if !NSApp.windows.contains(where: { $0.isVisible && $0.canBecomeMain }) {
+                    NSApp.setActivationPolicy(.accessory)
+                }
             }
         }
     }
@@ -128,23 +144,22 @@ struct MenuBarLabel: View {
     var body: some View {
         Image(systemName: symbol)
             .task {
-                delegate.openMainWindow = { openWindow(id: "main") }
+                delegate.openMainWindow = { openWindow(id: WindowID.main) }
                 coordinator.onFullDiskAccessLost = {
-                    openWindow(id: "main")
+                    openWindow(id: WindowID.main)
                     NSApp.activate(ignoringOtherApps: true)
                 }
                 delegate.openFile = { file in
                     if let disk = coordinator.disk(holding: file) {
                         navigation.restoreDiskID = disk.id
-                        navigation.pane = .restore
+                        openWindow(id: WindowID.restore)
                     } else {
-                        navigation.pane = .disks
+                        openWindow(id: WindowID.main)
                     }
-                    openWindow(id: "main")
                 }
                 coordinator.start()
                 if !coordinator.state.onboardingComplete || !delegate.launchedAtLogin {
-                    openWindow(id: "main")
+                    openWindow(id: WindowID.main)
                 }
             }
     }
