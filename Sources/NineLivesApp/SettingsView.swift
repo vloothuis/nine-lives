@@ -27,13 +27,14 @@ struct SettingsView: View {
             }
 
             Section("Schedule") {
-                Picker("While a disk stays connected", selection: binding(\.intervalMinutes)) {
-                    Text("Back up every 30 minutes").tag(30)
-                    Text("Back up every hour").tag(60)
-                    Text("Back up every 3 hours").tag(180)
-                    Text("Back up once a day").tag(1440)
-                    Text("Only when I plug in the disk").tag(0)
+                Picker("Back up automatically", selection: binding(\.intervalMinutes)) {
+                    Text("Every 30 minutes").tag(30)
+                    Text("Every hour").tag(60)
+                    Text("Every 3 hours").tag(180)
+                    Text("Once a day").tag(1440)
+                    Text("Never").tag(0)
                 }
+                Text(scheduleDescription).font(.caption).foregroundStyle(.secondary)
                 Toggle("Pause on battery below 20%", isOn: binding(\.pauseOnLowBattery))
                 Picker("Remind me when there is no backup for", selection: binding(\.remindAfterDays)) {
                     ForEach([3, 7, 14, 30], id: \.self) { Text("\($0) days").tag($0) }
@@ -196,6 +197,12 @@ struct SettingsView: View {
         Binding(
             get: { RetentionPreset.allCases.first { $0.retention == c.state.settings.retention } ?? .custom },
             set: { p in if let r = p.retention { c.updateSettings { $0.retention = r } } })
+    }
+
+    private var scheduleDescription: String {
+        c.state.settings.intervalMinutes == 0
+            ? "Disks back up when you plug them in. Servers only back up when you click Back Up."
+            : "Runs while a disk is connected or a server can be reached. Disks also back up when you plug them in."
     }
 
     private var retentionDescription: String {

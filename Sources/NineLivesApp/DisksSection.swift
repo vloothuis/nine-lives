@@ -41,8 +41,13 @@ struct DisksSection: View {
                         .frame(width: 32)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(disk.name).font(.title3.weight(.semibold))
-                        Text(!c.monitor.loaded ? "Checking…" : connected ? disk.onlineText : disk.offlineText)
-                            .font(.callout).foregroundStyle(.secondary)
+                        if connected, c.unreachableServers.contains(disk.id) {
+                            Text("Not reachable. Backups wait until the server answers.")
+                                .font(.callout).foregroundStyle(.orange)
+                        } else {
+                            Text(!c.monitor.loaded ? "Checking…" : connected ? disk.onlineText : disk.offlineText)
+                                .font(.callout).foregroundStyle(.secondary)
+                        }
                     }
                     Spacer()
                     if connected {
