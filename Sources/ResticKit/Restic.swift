@@ -233,7 +233,8 @@ public final class Restic: Sendable {
         progress: @escaping @Sendable (CreateProgress) -> Void
     ) async throws -> CreateResult {
         // -vv makes restic report every file, which feeds the sample used later to test restores.
-        var args = ["backup", "-vv", "--tag", options.tag, "--read-concurrency", String(options.readConcurrency)]
+        // --no-scan skips restic's own walk over the sources, which only exists to size the progress bar.
+        var args = ["backup", "-vv", "--no-scan", "--tag", options.tag, "--read-concurrency", String(options.readConcurrency)]
         if let host = options.host { args += ["--host", host] }
         if options.excludeCaches { args.append("--exclude-caches") }
         if options.oneFileSystem { args.append("--one-file-system") }
@@ -248,12 +249,11 @@ public final class Restic: Sendable {
         let e = try await executeChecked(args, repo: repo, onMessage: { m in
             switch m.message_type {
             case "status":
-                let started = (m.total_files ?? 0) > 0
                 progress(CreateProgress(
                     fileCount: m.files_done ?? 0,
                     originalSize: m.bytes_done ?? 0,
                     deduplicatedSize: 0,
-                    fraction: started ? m.percent_done : nil,
+                    fraction: nil,
                     currentPath: m.current_files?.first ?? ""))
             case "summary":
                 summary.set(m)

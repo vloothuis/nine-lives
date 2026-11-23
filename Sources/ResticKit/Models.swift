@@ -149,7 +149,7 @@ public struct CreateProgress: Sendable {
     public var originalSize: Int64
     /// Bytes added to the repository so far. restic only reports this at the end, so it is 0 while running.
     public var deduplicatedSize: Int64
-    /// Share of the work done, from 0 to 1, when restic has finished counting.
+    /// Always nil: restic runs with `--no-scan`, so it has no total to report.
     public var fraction: Double?
     public var currentPath: String
 }
