@@ -461,3 +461,25 @@ func fakeVolume(at url: URL, encrypted: Bool) -> VolumeInfo {
         #expect(BackupNotes.escapedPattern("/x/[a]*?") == "/x/\\[a\\]\\*\\?")
     }
 }
+
+@Suite struct OpenWithTests {
+    @Test func noValueOutsideAppBundle() {
+        #expect(OpenWith.value(for: Bundle(for: BundleMarker.self)) == nil)
+    }
+
+    @Test func valueNamesTheApp() throws {
+        let app = FileManager.default.temporaryDirectory.appendingPathComponent("T-\(UUID().uuidString).app")
+        try FileManager.default.createDirectory(at: app.appendingPathComponent("Contents"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: app) }
+        let plist: [String: Any] = ["CFBundleIdentifier": "org.example.test", "CFBundlePackageType": "APPL"]
+        try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
+            .write(to: app.appendingPathComponent("Contents/Info.plist"))
+        let bundle = try #require(Bundle(url: app))
+        let data = try #require(OpenWith.value(for: bundle))
+        let dict = try #require(try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
+        #expect(dict["bundleidentifier"] as? String == "org.example.test")
+        #expect(dict["path"] as? String == app.path)
+    }
+}
+
+private final class BundleMarker {}

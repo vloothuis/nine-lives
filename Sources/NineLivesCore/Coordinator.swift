@@ -163,6 +163,16 @@ public final class BackupCoordinator {
 
     public func connectedVolume(for disk: KnownDisk) -> VolumeInfo? { monitor.volume(withID: disk.id) }
 
+    /// The connected backup disk that holds this file, for example its `HOW TO RESTORE.txt`.
+    public func disk(holding file: URL) -> KnownDisk? {
+        let path = file.standardizedFileURL.path
+        return state.disks.first { disk in
+            guard !disk.isRemote, let v = connectedVolume(for: disk) else { return false }
+            let root = v.url.standardizedFileURL.path
+            return path.hasPrefix(root.hasSuffix("/") ? root : root + "/")
+        }
+    }
+
     /// A disk is connected when it is mounted. A server counts as connected when the Mac is online.
     public func isConnected(_ disk: KnownDisk) -> Bool {
         disk.isRemote ? networkAvailable : connectedVolume(for: disk) != nil
