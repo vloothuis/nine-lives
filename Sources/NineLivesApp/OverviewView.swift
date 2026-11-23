@@ -9,6 +9,7 @@ struct OverviewView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
+                if c.fullDiskAccessLost { accessLostCard }
                 statusCard
                 if !c.optionalFindings.isEmpty { optionalCard }
                 if case .backingUp(let id, let info) = c.activity { progressCard(id: id, info: info) }
@@ -25,6 +26,23 @@ struct OverviewView: View {
         }
         .navigationTitle("Overview")
         .sheet(isPresented: $showAddDisk) { AddDiskSheet() }
+    }
+
+    private var accessLostCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Nine Lives lost Full Disk Access", systemImage: "lock.shield.fill").font(.headline)
+                Text("macOS often turns it off when the app is updated. Until you turn it on again, backups skip Mail, Photos, Safari and other private data.")
+                    .font(.callout).foregroundStyle(.secondary)
+                Text("If Nine Lives still shows as on in System Settings, turn it off and on again, or remove it with the minus button and add it again.")
+                    .font(.callout).foregroundStyle(.secondary)
+                HStack {
+                    Button("Open Full Disk Access Settings") { Permissions.openFullDiskAccessSettings() }
+                        .buttonStyle(.borderedProminent)
+                    Button("Check Again") { c.checkFullDiskAccess() }
+                }
+            }
+        }
     }
 
     private var statusCard: some View {

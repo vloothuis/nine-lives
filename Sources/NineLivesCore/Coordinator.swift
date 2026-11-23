@@ -45,6 +45,10 @@ public final class BackupCoordinator {
 
     /// Large items found after a backup that wait for the user to choose.
     public private(set) var optionalFindings: [OptionalFinding] = []
+    /// True when Full Disk Access was granted before but is off now. Updating the app often causes this.
+    public private(set) var fullDiskAccessLost = false
+    /// Called when Full Disk Access is found missing after it was granted, so the app can show its window.
+    @ObservationIgnored public var onFullDiskAccessLost: (() -> Void)?
 
     @ObservationIgnored private var announcedFindings: Set<String> = []
     @ObservationIgnored private let store: StateStore
@@ -76,6 +80,10 @@ public final class BackupCoordinator {
             Task { @MainActor in self?.networkChanged(path) }
         }
         pathMonitor.start(queue: DispatchQueue(label: "org.ninelives.network"))
+        checkFullDiskAccess()
+        NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.checkFullDiskAccess() }
+        }
         let nc = NSWorkspace.shared.notificationCenter
         nc.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in
@@ -253,8 +261,27 @@ public final class BackupCoordinator {
         }
     }
 
+    /// Records that access is on, or reports once when it went missing after it was granted.
+    public func checkFullDiskAccess() {
+        if Permissions.hasFullDiskAccess() {
+            fullDiskAccessLost = false
+            if !state.hadFullDiskAccess {
+                state.hadFullDiskAccess = true
+                save()
+            }
+            return
+        }
+        guard state.hadFullDiskAccess, !fullDiskAccessLost else { return }
+        fullDiskAccessLost = true
+        notifier.post(title: "Nine Lives lost Full Disk Access",
+                      body: "macOS turned it off, often after an update. Turn it on again so your backups include all your files.",
+                      id: "full-disk-access", sound: true)
+        onFullDiskAccessLost?()
+    }
+
     public func tick() {
         let now = Date()
+        checkFullDiskAccess()
         remindIfStale(now: now)
         guard activity.isIdle, engine != nil else { return }
         let power = PowerState.current()
@@ -576,6 +603,7 @@ public final class BackupCoordinator {
         case .working(let t): return .running(t)
         case .idle: break
         }
+        if fullDiskAccessLost { return .warning("Full Disk Access is off") }
         if let last = state.history.first, last.outcome == .failed {
             return .error(last.messages.first ?? "The last backup failed.")
         }
