@@ -22,7 +22,7 @@ jobs:
 
   build:
     needs: version
-    runs-on: macos-15
+    runs-on: macos-26
     strategy:
       matrix:
         arch: [arm64, x86_64]

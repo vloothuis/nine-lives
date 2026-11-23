@@ -10,8 +10,13 @@ BUILD="${BUILD:-$(git rev-parse --short HEAD 2>/dev/null || echo dev)}"
 IDENTITY="${SIGN_IDENTITY:--}"
 APP="dist/Nine Lives.app"
 
-swift build -c release --arch "$ARCH"
-BIN="$(swift build -c release --arch "$ARCH" --show-bin-path)/NineLives"
+# macOS uses the SDK version recorded in the binary to pick the current or the older
+# window design. SwiftPM's default build system records the deployment target instead,
+# so set the real SDK version explicitly. Keep 15.0 in sync with Package.swift.
+SDK_VERSION="$(xcrun --show-sdk-version)"
+FLAGS=(-c release --arch "$ARCH" -Xlinker -platform_version -Xlinker macos -Xlinker 15.0 -Xlinker "$SDK_VERSION")
+swift build "${FLAGS[@]}"
+BIN="$(swift build "${FLAGS[@]}" --show-bin-path)/NineLives"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
