@@ -42,6 +42,8 @@ public final class BackupCoordinator {
     public private(set) var networkAvailable = true
     /// True on a hotspot or in Low Data Mode, where scheduled backups to servers wait.
     public private(set) var networkMetered = false
+    /// Servers that did not answer the last time a scheduled backup or check was due.
+    public private(set) var unreachableServers: Set<String> = []
 
     /// Large items found after a backup that wait for the user to choose.
     public private(set) var optionalFindings: [OptionalFinding] = []
@@ -240,6 +242,7 @@ public final class BackupCoordinator {
     /// Stops using a disk. The backups on it stay untouched.
     public func forgetDisk(_ id: String, removePassphrase: Bool = false) {
         state.disks.removeAll { $0.id == id }
+        unreachableServers.remove(id)
         if removePassphrase { secrets.removePassphrase(for: id) }
         save()
     }
@@ -265,8 +268,9 @@ public final class BackupCoordinator {
         guard let remote = disk.remote, !probing else { return }
         probing = true
         Task {
-            let ok = await ServerReachability.isReachable(host: remote.host, port: remote.port)
+            let ok = await ServerReachability.isReachable(remote)
             probing = false
+            if ok { unreachableServers.remove(disk.id) } else { unreachableServers.insert(disk.id) }
             if ok, activity.isIdle { action(self) }
         }
     }
@@ -423,6 +427,7 @@ public final class BackupCoordinator {
                     $0.name = volume.name
                 }
             }
+            unreachableServers.remove(disk.id)
             if trigger == .plugIn, state.settings.ejectAfterPlugIn, !disk.isRemote {
                 do { try eject(disk); ejected = true } catch { ejectProblem = true }
             }

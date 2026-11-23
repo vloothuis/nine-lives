@@ -483,3 +483,29 @@ func fakeVolume(at url: URL, encrypted: Bool) -> VolumeInfo {
 }
 
 private final class BundleMarker {}
+
+@Suite struct ServerReachabilityTests {
+    let fallback = ServerReachability.Target(host: "pi", port: 22, viaProxy: false)
+
+    @Test func usesHostNameFromSSHConfig() {
+        let out = "host pi\nhostname 10.0.1.3\nport 2222\nuser pi\nproxycommand none\n"
+        let t = ServerReachability.parse(sshConfig: out, fallback: fallback)
+        #expect(t == .init(host: "10.0.1.3", port: 2222, viaProxy: false))
+    }
+
+    @Test func detectsJumpHost() {
+        let t = ServerReachability.parse(sshConfig: "hostname nas\nproxyjump bastion\n", fallback: fallback)
+        #expect(t.viaProxy)
+    }
+
+    @Test func keepsFallbackOnEmptyOutput() {
+        #expect(ServerReachability.parse(sshConfig: "", fallback: fallback) == fallback)
+    }
+
+    @Test func resolvesAliasThroughSSH() async {
+        // Without a matching Host entry, ssh -G returns the name unchanged.
+        let t = await ServerReachability.resolve(RemoteServer(host: "nl-test-no-such-alias", user: "u", port: 2201, path: "/x"))
+        #expect(t.host == "nl-test-no-such-alias")
+        #expect(t.port == 2201)
+    }
+}

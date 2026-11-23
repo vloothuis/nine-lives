@@ -36,8 +36,13 @@ struct MenuBarView: View {
                             .foregroundStyle(c.isConnected(disk) ? Color.accentColor : .secondary)
                         VStack(alignment: .leading, spacing: 0) {
                             Text(disk.name)
-                            Text(disk.lastBackup.map { Fmt.relative($0) } ?? "No backup yet")
-                                .font(.caption).foregroundStyle(.secondary)
+                            HStack(spacing: 3) {
+                                if let last = disk.lastBackup { RelativeDateText(date: last) } else { Text("No backup yet") }
+                                if c.unreachableServers.contains(disk.id) {
+                                    Text("· not reachable").foregroundStyle(.orange)
+                                }
+                            }
+                            .font(.caption).foregroundStyle(.secondary)
                         }
                         Spacer()
                         if c.isConnected(disk) {
