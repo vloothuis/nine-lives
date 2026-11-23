@@ -24,7 +24,11 @@ struct MenuBarView: View {
                     if let f = info.fraction { ProgressView(value: f) } else { ProgressView().progressViewStyle(.linear) }
                     Text("\(c.disk(id)?.name ?? "Disk") · \(info.files.formatted()) files")
                         .font(.caption).foregroundStyle(.secondary)
-                    Button("Stop") { c.cancelCurrent() }.controlSize(.small)
+                    HStack {
+                        if info.lowPriority { Button("Speed Up") { c.speedUpCurrent() } }
+                        Button("Stop") { c.cancelCurrent() }
+                    }
+                    .controlSize(.small)
                 }
             }
 

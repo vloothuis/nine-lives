@@ -11,6 +11,8 @@ public struct ProgressInfo: Equatable, Sendable {
     public var fraction: Double?
     public var currentPath = ""
     public var started = Date()
+    /// The backup runs in macOS background mode, so it yields to what the user is doing.
+    public var lowPriority = false
 }
 
 public enum Activity: Equatable, Sendable {
@@ -55,6 +57,7 @@ public final class BackupCoordinator {
     @ObservationIgnored private let secrets: SecretStore
     @ObservationIgnored private let notifier = Notifier()
     @ObservationIgnored private var currentTask: Task<Void, Never>?
+    @ObservationIgnored private var backupPriority: ProcessPriority?
     @ObservationIgnored private var timer: Task<Void, Never>?
     @ObservationIgnored private var started = false
     @ObservationIgnored private var sleepActivity: NSObjectProtocol?
@@ -344,13 +347,29 @@ public final class BackupCoordinator {
         guard activity.isIdle, let engine, let disk = disk(diskID) else { return }
         let volume: VolumeInfo?
         do { volume = try access(to: disk) } catch { return }
+        // A backup someone asked for runs at normal priority. Automatic ones yield to the user.
+        let priority = ProcessPriority(background: trigger != .manual)
+        backupPriority = priority
         var info = ProgressInfo()
         info.started = Date()
+        info.lowPriority = priority.isBackground
         activity = .backingUp(diskID: diskID, info)
-        currentTask = Task { await self.performBackup(engine: engine, disk: disk, volume: volume, trigger: trigger) }
+        currentTask = Task {
+            await ProcessPriority.$current.withValue(priority) {
+                await self.performBackup(engine: engine, disk: disk, volume: volume, trigger: trigger)
+            }
+        }
     }
 
     public func cancelCurrent() { currentTask?.cancel() }
+
+    /// Lets the running backup use the Mac at normal priority until it ends.
+    public func speedUpCurrent() {
+        guard case .backingUp(let id, var info) = activity, let backupPriority else { return }
+        backupPriority.raise()
+        info.lowPriority = false
+        activity = .backingUp(diskID: id, info)
+    }
 
     private func beginKeepAwake(_ reason: String) {
         sleepActivity = ProcessInfo.processInfo.beginActivity(
@@ -440,6 +459,7 @@ public final class BackupCoordinator {
 
         addRecord(record)
         activity = .idle
+        backupPriority = nil
         notifyBackupFinished(record, disk: disk, ejected: ejected, ejectProblem: ejectProblem)
         currentTask = nil
         if record.outcome == .success || record.outcome == .warning { scanForOptionalItems() }
@@ -545,7 +565,8 @@ public final class BackupCoordinator {
         do { volume = try access(to: disk) } catch { return }
         activity = .verifying(diskID: diskID, "Starting…")
         beginKeepAwake("Checking backups on \(disk.name)")
-        currentTask = Task {
+        // Verification can start at the end of a backup; it must not inherit that backup's priority.
+        currentTask = ProcessPriority.$current.withValue(nil) { Task {
             defer { endKeepAwake() }
             do {
                 let summary = try await engine.verify(disk: disk, on: volume) { [weak self] text in
@@ -566,7 +587,7 @@ public final class BackupCoordinator {
             }
             activity = .idle
             currentTask = nil
-        }
+        } }
     }
 
     // MARK: - Restore support
