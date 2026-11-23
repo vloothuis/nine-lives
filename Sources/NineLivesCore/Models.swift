@@ -362,6 +362,8 @@ public struct AppState: Codable, Equatable, Sendable {
     public var history: [BackupRecord] = []
     public var onboardingComplete = false
     public var lastStaleReminder: Date?
+    /// Set once Full Disk Access has been seen, so losing it later (for example after an update) can be detected.
+    public var hadFullDiskAccess = false
 
     public init() {}
 
@@ -372,5 +374,6 @@ public struct AppState: Codable, Equatable, Sendable {
         history = try c.decodeIfPresent([BackupRecord].self, forKey: .history) ?? []
         onboardingComplete = try c.decodeIfPresent(Bool.self, forKey: .onboardingComplete) ?? false
         lastStaleReminder = try c.decodeIfPresent(Date.self, forKey: .lastStaleReminder)
+        hadFullDiskAccess = try c.decodeIfPresent(Bool.self, forKey: .hadFullDiskAccess) ?? false
     }
 }

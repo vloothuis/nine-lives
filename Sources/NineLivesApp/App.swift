@@ -110,6 +110,10 @@ struct MenuBarLabel: View {
         Image(systemName: symbol)
             .task {
                 delegate.openMainWindow = { openWindow(id: "main") }
+                coordinator.onFullDiskAccessLost = {
+                    openWindow(id: "main")
+                    NSApp.activate(ignoringOtherApps: true)
+                }
                 coordinator.start()
                 if !coordinator.state.onboardingComplete || !delegate.launchedAtLogin {
                     openWindow(id: "main")
