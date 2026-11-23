@@ -366,23 +366,26 @@ public final class BackupCoordinator {
         sleepActivity = nil
     }
 
-    private func updateProgress(_ p: CreateProgress, previousFiles: Int64) {
+    /// The bar follows elapsed time against the previous run's duration. It turns indeterminate when there is no
+    /// previous run or this run takes longer.
+    private func updateProgress(_ p: CreateProgress, start: Date, previousDuration: TimeInterval?) {
         guard case .backingUp(let id, var info) = activity else { return }
         info.files = p.fileCount
         info.bytes = p.originalSize
         info.sentBytes = p.deduplicatedSize
         info.currentPath = p.currentPath
-        if let f = p.fraction {
-            info.fraction = min(f, 0.99)
-        } else if previousFiles > 0 {
-            info.fraction = min(Double(p.fileCount) / Double(previousFiles), 0.99)
+        if let usual = previousDuration, usual > 0 {
+            let f = Date().timeIntervalSince(start) / usual
+            info.fraction = f < 0.99 ? f : nil
+        } else {
+            info.fraction = nil
         }
         activity = .backingUp(diskID: id, info)
     }
 
     private func performBackup(engine: BackupEngine, disk: KnownDisk, volume: VolumeInfo?, trigger: BackupTrigger) async {
         let start = Date()
-        let previousFiles = disk.lastBackupStats?.fileCount ?? 0
+        let previousDuration = disk.lastBackupDuration
         beginKeepAwake("Backing up to \(disk.name)")
         defer { endKeepAwake() }
         var record = BackupRecord(diskID: disk.id, diskName: disk.name, start: start, end: start, outcome: .success, trigger: trigger)
@@ -402,7 +405,7 @@ public final class BackupCoordinator {
                 }
             }
             let result = try await engine.runBackup(disk: disk, on: volume, settings: state.settings) { [weak self] p in
-                Task { @MainActor in self?.updateProgress(p, previousFiles: previousFiles) }
+                Task { @MainActor in self?.updateProgress(p, start: start, previousDuration: previousDuration) }
             }
             let end = Date()
             record.end = end
