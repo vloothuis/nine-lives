@@ -3,6 +3,7 @@ import NineLivesCore
 
 struct OverviewView: View {
     @Environment(BackupCoordinator.self) private var c
+    @Environment(\.openWindow) private var openWindow
     @State private var showAddDisk = false
     @State private var collapsedGroups: Set<String> = []
 
@@ -19,12 +20,28 @@ struct OverviewView: View {
                 if case .working(let text) = c.activity {
                     Card { HStack { ProgressView().controlSize(.small); Text(text) } }
                 }
-                if !c.state.disks.isEmpty { disksSection }
                 notes
+                if !c.state.disks.isEmpty { DisksSection() }
             }
             .padding(24)
         }
-        .navigationTitle("Overview")
+        .navigationTitle("Nine Lives")
+        .toolbar {
+            ToolbarItemGroup {
+                Button { openWindow(id: WindowID.restore) } label: {
+                    Label("Restore Files", systemImage: "clock.arrow.circlepath")
+                }
+                .help("Browse your backups and restore files")
+                Button { openWindow(id: WindowID.activity) } label: {
+                    Label("Activity", systemImage: "list.bullet.rectangle")
+                }
+                .help("Show past backups and checks")
+                Button { showAddDisk = true } label: {
+                    Label("Add Disk", systemImage: "plus")
+                }
+                .help("Add a backup disk or server")
+            }
+        }
         .sheet(isPresented: $showAddDisk) { AddDiskSheet() }
     }
 
@@ -155,37 +172,6 @@ struct OverviewView: View {
         }
     }
 
-    private var disksSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Backup disks").font(.headline)
-            ForEach(c.state.disks) { disk in
-                Card {
-                    HStack(spacing: 12) {
-                        Image(systemName: disk.symbol(connected: c.isConnected(disk)))
-                            .font(.title2)
-                            .foregroundStyle(c.isConnected(disk) ? Color.accentColor : .secondary)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(disk.name).font(.body.weight(.medium))
-                            if let last = disk.lastBackup {
-                                HStack(spacing: 3) { Text("Last backup"); RelativeDateText(date: last) }
-                                    .font(.callout).foregroundStyle(.secondary)
-                            } else {
-                                Text("No backup yet").font(.callout).foregroundStyle(.secondary)
-                            }
-                        }
-                        Spacer()
-                        if c.isConnected(disk) {
-                            Button("Back Up Now") { c.startBackup(diskID: disk.id, trigger: .manual) }
-                                .disabled(!c.activity.isIdle || !c.engineAvailable)
-                        } else if c.monitor.loaded {
-                            Label(disk.offlineText, systemImage: disk.isRemote ? "wifi.slash" : "cable.connector.slash").font(.callout).foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     @ViewBuilder private var notes: some View {
         if let last = c.state.history.first, !last.messages.isEmpty, last.outcome != .cancelled {
             VStack(alignment: .leading, spacing: 8) {
@@ -198,7 +184,11 @@ struct OverviewView: View {
                             let groups = BackupNotes.group(last.messages)
                             ForEach(groups.prefix(5)) { g in noteRow(g) }
                             if groups.count > 5 {
-                                Text("And \(groups.count - 5) more in Activity.").font(.callout).foregroundStyle(.secondary)
+                                HStack(spacing: 4) {
+                                    Text("And \(groups.count - 5) more.")
+                                    Button("Show in Activity") { openWindow(id: WindowID.activity) }.buttonStyle(.link)
+                                }
+                                .font(.callout).foregroundStyle(.secondary)
                             }
                             if groups.isEmpty {
                                 Text("Some files changed or disappeared while the backup ran. This is normal.").font(.callout)

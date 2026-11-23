@@ -3,7 +3,6 @@ import NineLivesCore
 
 struct OnboardingView: View {
     @Environment(BackupCoordinator.self) private var c
-    @Environment(Navigation.self) private var nav
 
     enum Page: Int, CaseIterable { case welcome, access, disk, options }
 
@@ -104,7 +103,6 @@ struct OnboardingView: View {
         c.updateSettings { $0.notifyOnSuccess = notifications }
         if notifications { Task { _ = await c.requestNotificationPermission() } }
         c.completeOnboarding()
-        nav.pane = .overview
         if let disk = c.state.disks.first { c.startBackup(diskID: disk.id, trigger: .manual) }
     }
 }

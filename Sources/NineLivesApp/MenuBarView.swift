@@ -3,8 +3,8 @@ import NineLivesCore
 
 struct MenuBarView: View {
     @Environment(BackupCoordinator.self) private var c
-    @Environment(Navigation.self) private var nav
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -52,8 +52,10 @@ struct MenuBarView: View {
 
             Divider()
             VStack(alignment: .leading, spacing: 2) {
-                menuButton("Open Nine Lives") { show(.overview) }
-                menuButton("Restore Files…") { show(.restore) }
+                menuButton("Open Nine Lives") { show(WindowID.main) }
+                menuButton("Restore Files…") { show(WindowID.restore) }
+                menuButton("Activity") { show(WindowID.activity) }
+                menuButton("Settings…") { NSApp.activate(); openSettings() }
                 menuButton("About Nine Lives") { AboutPanel.show() }
                 menuButton("Quit Nine Lives") { NSApplication.shared.terminate(nil) }
             }
@@ -64,9 +66,8 @@ struct MenuBarView: View {
 
     private var isRunning: Bool { if case .running = c.status { true } else { false } }
 
-    private func show(_ pane: Pane) {
-        nav.pane = pane
-        openWindow(id: "main")
+    private func show(_ id: String) {
+        openWindow(id: id)
         NSApp.activate()
     }
 
