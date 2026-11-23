@@ -79,6 +79,7 @@ enum ProcessTree {
 public enum ProcessRunner {
     /// Runs a process, streaming stderr (and optionally stdout) line by line.
     /// Cancelling the task sends SIGINT, then SIGTERM after a grace period.
+    /// The process runs with the priority in `ProcessPriority.current`, if any.
     public static func run(
         executable: URL,
         arguments: [String],
@@ -132,6 +133,7 @@ public enum ProcessRunner {
                 errSplitter?.feed(d)
             }
         }
+        let priority = ProcessPriority.current
         process.terminationHandler = { _ in group.leave() }
 
         return try await withTaskCancellationHandler {
@@ -144,8 +146,11 @@ public enum ProcessRunner {
                     cont.resume(throwing: error)
                     return
                 }
+                priority?.attach(process.processIdentifier)
                 if Task.isCancelled { process.interrupt() }
                 group.notify(queue: .global()) {
+                    // Runs after attach, so a quick exit cannot leave a stale pid behind.
+                    priority?.detach(process.processIdentifier)
                     cont.resume(returning: ProcessResult(
                         exitCode: process.terminationStatus,
                         stdout: collected.value

@@ -251,3 +251,50 @@ final class ItemBox: @unchecked Sendable {
     func add(_ i: ArchiveItem) { lock.lock(); _items.append(i); lock.unlock() }
     var items: [ArchiveItem] { lock.lock(); defer { lock.unlock() }; return _items }
 }
+
+/// Background processes run at scheduler priority 4. `ps` shows the priority of each pid.
+@Suite(.serialized) struct ProcessPriorityTests {
+    /// The script prints the priority of the shell and of a child it started later, then
+    /// waits until the test has seen that line and prints both priorities again.
+    private func priorities(background: Bool, raise: Bool) async throws -> [[Int]] {
+        let go = try makeTempDir().appendingPathComponent("go")
+        let script = """
+            sleep 0.3; /bin/sleep 60 & K=$!; sleep 0.1
+            ps -o pri= -p $$,$K | tr '\\n' ' '; echo
+            while [ ! -f '\(go.path)' ]; do sleep 0.05; done
+            ps -o pri= -p $$,$K | tr '\\n' ' '; echo
+            kill $K
+            """
+        let priority = ProcessPriority(background: background)
+        let lines = LockedLines()
+        _ = try await ProcessPriority.$current.withValue(priority) {
+            try await ProcessRunner.run(
+                executable: URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", script],
+                environment: ["PATH": "/usr/bin:/bin"],
+                onStdoutLine: { line in
+                    lines.add(line)
+                    if raise { priority.raise() }
+                    FileManager.default.createFile(atPath: go.path, contents: nil)
+                })
+        }
+        return lines.all.split(separator: "\n").map { $0.split(separator: " ").compactMap { Int($0) } }
+    }
+
+    @Test func backgroundReachesChildren() async throws {
+        let p = try await priorities(background: true, raise: false)
+        #expect(p == [[4, 4], [4, 4]])
+    }
+
+    @Test func raiseReachesRunningChildren() async throws {
+        let p = try await priorities(background: true, raise: true)
+        #expect(p.count == 2)
+        #expect(p[0] == [4, 4])
+        #expect(p[1].count == 2 && !p[1].contains(4))
+    }
+
+    @Test func normalPriorityIsNotBackground() async throws {
+        let p = try await priorities(background: false, raise: false)
+        #expect(p.count == 2)
+        #expect(p.allSatisfy { $0.count == 2 && !$0.contains(4) })
+    }
+}

@@ -162,6 +162,10 @@ struct OverviewView: View {
                 HStack {
                     Text("Backing up to \(c.disk(id)?.name ?? "disk")").font(.headline)
                     Spacer()
+                    if info.lowPriority {
+                        Button("Speed Up") { c.speedUpCurrent() }
+                            .help("Let this backup use more of your Mac. It may slow down other apps until it ends.")
+                    }
                     Button("Stop") { c.cancelCurrent() }
                 }
                 if let f = info.fraction { ProgressView(value: f) } else { ProgressView().progressViewStyle(.linear) }
