@@ -254,6 +254,10 @@ extension DefaultRules {
     private static let system = group("System and apps", "Rebuilt by macOS or the app that made it.", [
         ("Saved window states", .home, "Library/Saved Application State"),
         ("Crash reports", .home, "Library/Application Support/CrashReporter"),
+        ("Spotlight data of apps", .home, "Library/Metadata/CoreSpotlight"),
+        ("iCloud and file provider sync state", .home, "Library/Application Support/FileProvider"),
+        ("Connected device file systems", .home, "Library/Developer/CoreDevice/DeviceFS"),
+        ("Google software update state", .home, "Library/Google/GoogleSoftwareUpdate"),
         ("Spotlight index", .anywhere, ".Spotlight-V100"),
         ("File change log", .anywhere, ".fseventsd"),
         ("Document version database", .anywhere, ".DocumentRevisions-V100"),
