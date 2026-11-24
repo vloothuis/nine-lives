@@ -41,7 +41,8 @@ Measured on a real home folder (786,204 folders, 70,016 distinct names, 4.7 mill
 ## Pattern suggestions
 
 1. Group unreadable and blocked items by folder, as before.
-2. Two groups can merge when their folders have the same depth and the same last name. Where names differ,
+2. Two groups can merge when their folders have the same depth. Without an index the last name must also be the same,
+   because `Projects/*` would skip every project. Where names differ,
    their shared start and end are kept and the middle becomes `*` (`ansible-local-*`). Each component is a
    restic pattern component: `*` does not cross `/`, and the pattern is absolute.
 3. With an index of the same backup, a merge is accepted when the pattern matches at most 10 items besides
@@ -65,5 +66,5 @@ user's backup coverage.
 | A crafted folder name breaks the line scanner or the file (quotes, escapes, newlines, very long names). | Escaped items go through `JSONDecoder`. Lines without an item are ignored. The reader validates every count and offset and rejects the file on any mismatch. Names cannot hold NUL, which separates them in the file. |
 | A tampered index makes a broad pattern look narrow, so the user skips data they need. | A local attacker who can write the index can also change settings directly, so this adds no new access. The pattern stays visible in the note and in settings, and the home-folder check does not depend on the index. |
 | A planted symlink redirects the write. | The temporary file is created in the index folder and swapped in with `replaceItemAt`, which replaces a symlink at the destination instead of following it. |
-| Over-broad patterns skip data created later. | The budget limits extras in the last backup. The last name is never a wildcard. The note says "in the last backup". The rule is shown in settings and can be removed. |
+| Over-broad patterns skip data created later. | The budget limits extras in the last backup. The last name only becomes a wildcard when the index shows the pattern stays within that budget. The note says "in the last backup". The rule is shown in settings and can be removed. |
 | Resource use. | Folders only. Collecting stops at 2 million folders. Measured 56 MB for 786,204 folders during a backup and nothing between backups. |

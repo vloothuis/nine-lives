@@ -268,6 +268,7 @@ public struct FolderIndex: Sendable {
         let fm = FileManager.default
         let dir = url.deletingLastPathComponent()
         try fm.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
         let temp = dir.appendingPathComponent(".\(UUID().uuidString).tmp")
         guard fm.createFile(atPath: temp.path, contents: data(), attributes: [.posixPermissions: 0o600]) else {
             throw CocoaError(.fileWriteUnknown)
