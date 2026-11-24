@@ -453,6 +453,108 @@ func fakeVolume(at url: URL, encrypted: Bool) -> VolumeInfo {
         #expect(groups[2].cause == .other)
     }
 
+    @Test func withoutIndexMergesFoldersThatDifferInOneName() {
+        let groups = BackupNotes.group([
+            "open /Users/a/FP/AB-1/wharf/tombstone/x: permission denied",
+            "open /Users/a/FP/CD-2/wharf/tombstone/y: permission denied",
+            "open /Users/a/FP/EF-3/wharf/tombstone/z: permission denied",
+            "open /Users/a/Projects/one/f: permission denied",
+            "open /Users/a/Projects/two/f: permission denied",
+            "open /Users/a/X/p/q/t/f: permission denied",
+            "open /Users/a/X/r/s/t/f: permission denied",
+        ], home: "/Users/a")
+        #expect(groups.count == 5)
+        #expect(groups[0].folder == "/Users/a/FP/*/wharf/tombstone")
+        #expect(groups[0].pattern == "/Users/a/FP/*/wharf/tombstone")
+        #expect(groups[0].folders.count == 3)
+        #expect(groups[0].extra == nil)
+        #expect(BackupNotes.canSkip(groups[0], home: "/Users/a"))
+        #expect(groups[1].folders == ["/Users/a/Projects/one"])
+    }
+
+    @Test func generalizeKeepsSharedStartAndEnd() {
+        let c = BackupNotes.generalize(["/t/ansible-local-8f3a2/x", "/t/ansible-local-91bc0/x"])
+        #expect(c?.pattern == "/t/ansible-local-*/x")
+        #expect(c?.slots == 1)
+        #expect(BackupNotes.generalize(["/a/x", "/a/y"]) == nil)
+        #expect(BackupNotes.generalize(["/a/b/x", "/a/x"]) == nil)
+        #expect(BackupNotes.generalize(["/a/[1]/x", "/a/[2]/x"])?.pattern == "/a/\\[*\\]/x")
+        #expect(!BackupNotes.canSkip(prefixOf: "/Users/*/x", home: "/Users/a"))
+        #expect(!BackupNotes.canSkip(prefixOf: "/Users/a/*/x", home: "/Users/a"))
+        #expect(BackupNotes.canSkip(prefixOf: "/Users/a/b/*/x", home: "/Users/a"))
+    }
+
+    private func index(_ files: [String], unreadable: [String] = []) -> FolderIndex {
+        let c = FolderCollector()
+        for f in files {
+            c.addVerboseLine(#"{"message_type":"verbose_status","action":"new","item":"\#(f)","data_size":1}"#)
+        }
+        for u in unreadable { c.addUnreadable(u) }
+        let built = FolderIndex(c, snapshotID: "abcdef0123")
+        return FolderIndex(data: built.data())!
+    }
+
+    @Test func indexRoundTripsAndCounts() {
+        let i = index(["/h/a/1", "/h/a/2", "/h/a/b/3", "/h/a/b/", "/h/a/", "/h/c/4"])
+        #expect(i.snapshotID == "abcdef0123")
+        let a = i.node(at: "/h/a")!
+        #expect(i.items[a] == 4)
+        #expect(i.matches("/h/*").count == 2)
+        #expect(i.matches("/h/a/b").count == 1)
+        #expect(i.node(at: "/h/zz") == nil)
+        #expect(FolderIndex(data: Data([1, 2, 3])) == nil)
+    }
+
+    @Test func indexDecidesHowBroadAPatternMayBe() {
+        var files: [String] = []
+        for u in ["U1", "U2", "U3"] { files += ["/h/FP/\(u)/srv1/tombstone/", "/h/FP/\(u)/srv2/tombstone/"] }
+        // A sibling folder with real content that a broad pattern would catch.
+        files += (0..<50).map { "/h/Work/proj/tombstone/f\($0)" }
+        let i = index(files, unreadable: ["/h/FP/U1/srv1/tombstone/x", "/h/FP/U2/srv2/tombstone/x", "/h/FP/U3/srv1/tombstone/x"])
+        let groups = BackupNotes.group([
+            "open /h/FP/U1/srv1/tombstone/x: permission denied",
+            "open /h/FP/U2/srv2/tombstone/x: permission denied",
+            "open /h/FP/U3/srv1/tombstone/x: permission denied",
+        ], index: i, home: "/h")
+        #expect(groups.count == 1)
+        #expect(groups[0].pattern == "/h/FP/U*/srv*/tombstone")
+        #expect(groups[0].extra == FolderIndex.Extra(folders: 3, items: 3, unknown: false))
+
+        // Without index entries for the failing folders, the index is not trusted for merging.
+        #expect(i.extra(of: "/h/*/*/tombstone", besides: ["/h/nope"]) == nil)
+        let broad = i.extra(of: "/h/*/*/tombstone", besides: ["/h/FP/U1/srv1/tombstone"])!
+        #expect(broad.items > BackupNotes.extraBudget)
+    }
+
+    @Test func lastNameMayDifferOnlyWhenTheIndexAllowsIt() {
+        var files = ["/h/t/ansible-local-1x/f", "/h/t/ansible-local-2y/f"]
+        files += (0..<20).map { "/h/P/\($0 % 4)/f\($0)" }
+        let i = index(files, unreadable: ["/h/t/ansible-local-1x/f", "/h/t/ansible-local-2y/f"])
+        let a = BackupNotes.group(["open /h/t/ansible-local-1x/f: permission denied",
+                                   "open /h/t/ansible-local-2y/f: permission denied"], index: i, home: "/h")
+        #expect(a.count == 1)
+        #expect(a[0].pattern == "/h/t/ansible-local-*")
+        // Two of four project folders failing: /h/P/* would also skip the other two, with 10 files.
+        let p = BackupNotes.group(["open /h/P/0/f0: permission denied", "open /h/P/1/f1: permission denied"], index: i, home: "/h")
+        #expect(p.count == 2)
+        #expect(BackupNotes.group(["open /h/t/ansible-local-1x/f: permission denied",
+                                   "open /h/t/ansible-local-2y/f: permission denied"], home: "/h").count == 2)
+    }
+
+    @Test func unreadableFoldersCountAsUnknown() {
+        let i = index(["/h/a/x/f", "/h/b/x/f"], unreadable: ["/h/b/x/secret"])
+        let e = i.extra(of: "/h/*/x", besides: ["/h/a/x"])!
+        #expect(e.unknown)
+    }
+
+    @Test func collectorReadsEscapedPaths() {
+        #expect(FolderCollector.item(in: #"{"item":"/a/b\"c/d","x":1}"#) == "/a/b\"c/d")
+        #expect(FolderCollector.item(in: #"{"item":"/a/b","x":1}"#) == "/a/b")
+        #expect(FolderGlob.covers("/h/FP/*/w", "/h/FP/U1/w"))
+        #expect(FolderGlob.covers("/h/FP", "/h/FP/U1/w"))
+        #expect(!FolderGlob.covers("/h/FP/*/w", "/h/FP/U1/v"))
+    }
+
     @Test func skipIsNarrowAndLiteral() {
         #expect(!BackupNotes.canSkip("/", home: "/Users/a"))
         #expect(!BackupNotes.canSkip("/Users", home: "/Users/a"))

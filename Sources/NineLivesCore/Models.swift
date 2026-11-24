@@ -118,6 +118,8 @@ public enum DefaultRules {
                     kind: .home, value: "Library/Application Support/Nine Lives/Restic"),
         ExcludeRule(id: "own-catalog", title: "Nine Lives catalogs", detail: "",
                     kind: .home, value: "Library/Application Support/Nine Lives/Catalogs"),
+        ExcludeRule(id: "own-folder-index", title: "Nine Lives folder index", detail: "",
+                    kind: .home, value: "Library/Application Support/Nine Lives/Folder Index"),
     ]
 }
 

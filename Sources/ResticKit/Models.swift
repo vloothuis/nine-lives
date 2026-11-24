@@ -200,6 +200,8 @@ public struct CreateResult: Sendable {
     public var warnings: [String]
     /// Files spread over the snapshot, used to test restores without listing the whole snapshot.
     public var sample: [SampledFile] = []
+    /// The folder tree of the backup, or nil when it was too large to collect.
+    public var folders: FolderCollector?
 }
 
 public struct CheckResult: Sendable {

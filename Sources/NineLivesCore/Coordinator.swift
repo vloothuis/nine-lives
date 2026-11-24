@@ -65,6 +65,10 @@ public final class BackupCoordinator {
     @ObservationIgnored private var sleepActivity: NSObjectProtocol?
     @ObservationIgnored private let pathMonitor = NWPathMonitor()
     @ObservationIgnored private var probing = false
+    /// Notes grouped with the folder index of the same backup. Setting one refreshes the notes.
+    private var indexedNotes: [UUID: [BackupNoteGroup]] = [:]
+    @ObservationIgnored private var noteCache: (id: UUID, groups: [BackupNoteGroup])?
+    @ObservationIgnored private var indexing: Set<UUID> = []
     public var sshKeys: SSHKeyStore { SSHKeyStore(directory: store.sshDirectory) }
 
     public init(store: StateStore = StateStore(), secrets: SecretStore = KeychainSecretStore()) {
@@ -72,6 +76,42 @@ public final class BackupCoordinator {
         self.secrets = secrets
         self.state = store.load()
         rebuildEngine()
+    }
+
+    /// Stores the folder tree of a finished backup and groups its notes with it, off the main thread.
+    private func saveFolderIndex(_ folders: FolderCollector, snapshotID: String, record: BackupRecord) {
+        let url = store.folderIndexURL
+        let messages = record.messages, id = record.id
+        Task.detached(priority: .utility) { [weak self] in
+            let index = FolderIndex(folders, snapshotID: snapshotID)
+            try? index.write(to: url)
+            guard !messages.isEmpty else { return }
+            let groups = BackupNotes.group(messages, index: index)
+            await self?.setIndexedNotes(groups, for: id)
+        }
+    }
+
+    private func setIndexedNotes(_ groups: [BackupNoteGroup], for id: UUID) {
+        indexedNotes[id] = groups
+    }
+
+    /// The notes of a backup, grouped. Skip patterns are judged with the folder index of the same backup.
+    /// The index is read in the background and not kept in memory; until it is read, notes are grouped without it.
+    public func noteGroups(for r: BackupRecord) -> [BackupNoteGroup] {
+        if let g = indexedNotes[r.id] { return g }
+        if let c = noteCache, c.id == r.id { return c.groups }
+        let groups = BackupNotes.group(r.messages)
+        noteCache = (r.id, groups)
+        if groups.contains(where: { $0.cause != .other }), let name = r.archiveName, !indexing.contains(r.id) {
+            indexing.insert(r.id)
+            let url = store.folderIndexURL, messages = r.messages, id = r.id
+            Task.detached(priority: .utility) { [weak self] in
+                guard let index = FolderIndex.load(from: url), index.snapshotID.hasPrefix(name) else { return }
+                let groups = BackupNotes.group(messages, index: index)
+                await self?.setIndexedNotes(groups, for: id)
+            }
+        }
+        return groups
     }
 
     // MARK: - Lifecycle
@@ -408,6 +448,8 @@ public final class BackupCoordinator {
         beginKeepAwake("Backing up to \(disk.name)")
         defer { endKeepAwake() }
         var record = BackupRecord(diskID: disk.id, diskName: disk.name, start: start, end: start, outcome: .success, trigger: trigger)
+        var createdFolders: FolderCollector?
+        var snapshotID = ""
         var ejected = false
         var ejectProblem = false
 
@@ -432,6 +474,8 @@ public final class BackupCoordinator {
             record.stats = result.create.stats
             record.messages = (migrationWarning.map { [$0] } ?? []) + result.create.warnings + result.maintenanceWarnings
             record.outcome = record.messages.isEmpty ? .success : .warning
+            createdFolders = result.create.folders
+            snapshotID = result.create.archiveID
             updateDisk(disk.id) {
                 $0.repoFolder = result.disk.repoFolder
                 $0.remote = result.disk.remote
@@ -466,6 +510,7 @@ public final class BackupCoordinator {
         }
 
         addRecord(record)
+        if let folders = createdFolders { saveFolderIndex(folders, snapshotID: snapshotID, record: record) }
         activity = .idle
         backupPriority = nil
         notifyBackupFinished(record, disk: disk, ejected: ejected, ejectProblem: ejectProblem)
@@ -524,20 +569,20 @@ public final class BackupCoordinator {
     }
 
     /// Adds a rule that skips this folder from the next backup on.
-    public func skipFolder(_ path: String) {
-        guard BackupNotes.canSkip(path), !isSkipped(path) else { return }
+    public func skip(_ group: BackupNoteGroup) {
+        guard BackupNotes.canSkip(group), !isSkipped(group), let folder = group.folder, let pattern = group.pattern else { return }
         updateSettings {
-            $0.rules.append(ExcludeRule(id: UUID().uuidString, title: (path as NSString).abbreviatingWithTildeInPath,
+            $0.rules.append(ExcludeRule(id: UUID().uuidString, title: (folder as NSString).abbreviatingWithTildeInPath,
                                         detail: "Added by you from backup notes", kind: .absolute,
-                                        value: BackupNotes.escapedPattern(path), builtIn: false))
+                                        value: pattern, builtIn: false))
         }
     }
 
-    /// True when an enabled rule skips exactly this folder.
-    public func isSkipped(_ path: String) -> Bool {
+    /// True when enabled rules already skip every folder of the group.
+    public func isSkipped(_ group: BackupNoteGroup) -> Bool {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let pattern = BackupNotes.escapedPattern(path)
-        return state.settings.rules.contains { $0.enabled && $0.pattern(home: home) == pattern }
+        let patterns = state.settings.rules.filter(\.enabled).compactMap { $0.pattern(home: home) }
+        return !group.folders.isEmpty && group.folders.allSatisfy { f in patterns.contains { FolderGlob.covers($0, f) } }
     }
 
     /// Forgets a single-item answer, so the item is asked about again after the next backup.
