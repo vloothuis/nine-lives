@@ -48,4 +48,6 @@ public final class StateStore: @unchecked Sendable {
     public var legacyBorgDirectory: URL { directory.appendingPathComponent("Borg", isDirectory: true) }
     public var sshDirectory: URL { directory.appendingPathComponent("SSH", isDirectory: true) }
     public var catalogDirectory: URL { directory.appendingPathComponent("Catalogs", isDirectory: true) }
+    /// The folder tree of the last backup, used to judge skip patterns in backup notes.
+    public var folderIndexURL: URL { directory.appendingPathComponent("Folder Index/latest.nlfi") }
 }

@@ -246,6 +246,7 @@ public final class Restic: Sendable {
 
         let summary = SummaryBox()
         let sampler = FileSampler()
+        let folders = FolderCollector()
         let e = try await executeChecked(args, repo: repo, onMessage: { m in
             switch m.message_type {
             case "status":
@@ -257,11 +258,15 @@ public final class Restic: Sendable {
                     currentPath: m.current_files?.first ?? ""))
             case "summary":
                 summary.set(m)
+            case "error":
+                if let item = m.item { folders.addUnreadable(item) }
             default:
                 break
             }
         }, intercept: { line in
-            Self.sampleVerboseLine(line, into: sampler)
+            guard Self.sampleVerboseLine(line, into: sampler) else { return false }
+            folders.addVerboseLine(line)
+            return true
         })
         guard let s = summary.value, let id = s.snapshot_id else { throw e.logs.error(exitCode: e.code) }
         let packed = s.data_added_packed ?? s.data_added ?? 0
@@ -275,7 +280,8 @@ public final class Restic: Sendable {
                 fileCount: s.total_files_processed ?? 0),
             duration: s.total_duration ?? 0,
             warnings: e.logs.collectedWarnings,
-            sample: sampler.result)
+            sample: sampler.result,
+            folders: folders.overflowed ? nil : folders)
     }
 
     /// Handles one per-file line from `backup -vv`. Returns false for lines that are not per-file reports.

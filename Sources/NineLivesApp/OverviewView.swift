@@ -185,7 +185,7 @@ struct OverviewView: View {
                         if last.outcome == .failed, let m = last.messages.first {
                             ErrorBox(error: ShownError(m, details: last.details))
                         } else {
-                            let groups = BackupNotes.group(last.messages)
+                            let groups = c.noteGroups(for: last)
                             ForEach(groups.prefix(5)) { g in noteRow(g) }
                             if groups.count > 5 {
                                 HStack(spacing: 4) {
@@ -209,16 +209,24 @@ struct OverviewView: View {
             switch g.cause {
             case .unreadable:
                 let folder = displayPath(g.folder ?? "")
-                Text(g.paths.count == 1 ? "1 item in \(folder) could not be read."
-                                        : "\(g.paths.count) items in \(folder) could not be read.")
+                let place = g.folders.count > 1 ? "\(g.folders.count) folders like \(folder)" : folder
+                Text(g.paths.count == 1 ? "1 item in \(place) could not be read."
+                                        : "\(g.paths.count) items in \(place) could not be read.")
                     .font(.callout.weight(.medium))
                 Text("They belong to another user or only their owner may open them. This is often temporary data left by a tool. Skip the folder if you do not need it in your backup.")
                     .font(.callout).foregroundStyle(.secondary)
-                if let f = g.folder, BackupNotes.canSkip(f) {
-                    if c.isSkipped(f) {
+                if BackupNotes.canSkip(g) {
+                    if c.isSkipped(g) {
                         Text("Skipped from the next backup on.").font(.callout).foregroundStyle(.secondary)
                     } else {
-                        Button("Skip \(folder)") { c.skipFolder(f) }
+                        Button(g.folders.count > 1 ? "Skip all \(g.folders.count) folders" : "Skip \(folder)") { c.skip(g) }
+                            .help(g.folders.joined(separator: "\n"))
+                        if g.folders.count > 1, let e = g.extra {
+                            Text(e.folders == 0
+                                 ? "In the last backup, this skips these folders and nothing else."
+                                 : "In the last backup, this also skips \(e.folders == 1 ? "1 other folder" : "\(e.folders) other folders") with \(e.items == 1 ? "1 item" : "\(e.items.formatted()) items").")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                     }
                 }
             case .protected:

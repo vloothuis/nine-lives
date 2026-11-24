@@ -13,16 +13,40 @@ public struct BackupNoteGroup: Identifiable, Equatable, Sendable {
 
     public var cause: Cause
     /// The folder that holds the affected items, or nil when no path was found.
+    /// When several folders follow one pattern, the parts that differ are shown with `*`.
     public var folder: String?
+    /// The real folders this group covers.
+    public var folders: [String] = []
     public var paths: [String]
     public var messages: [String]
+    /// A restic exclude pattern that matches every folder of the group.
+    public var pattern: String?
+    /// What the pattern matched in the last backup besides these folders. Nil when that is not known.
+    public var extra: FolderIndex.Extra?
 
     public var id: String { "\(cause)|\(folder ?? messages.first ?? "")" }
+
+    public init(cause: Cause, folder: String?, folders: [String]? = nil, paths: [String], messages: [String],
+                pattern: String? = nil, extra: FolderIndex.Extra? = nil) {
+        self.cause = cause
+        self.folder = folder
+        self.folders = folders ?? folder.map { [$0] } ?? []
+        self.paths = paths
+        self.messages = messages
+        self.pattern = pattern ?? folder.map(BackupNotes.escapedPattern)
+        self.extra = extra
+    }
 }
 
 public enum BackupNotes {
+    /// Items a pattern may match besides the failing folders, for example an empty sibling folder.
+    public static let extraBudget = 10
+
     /// Groups restic warnings. Files that vanished while the backup ran are normal and left out.
-    public static func group(_ messages: [String]) -> [BackupNoteGroup] {
+    /// With an index of the same backup, folders that follow one pattern are merged when the
+    /// pattern matches little else. Without one, only folders that differ in one name are merged.
+    public static func group(_ messages: [String], index: FolderIndex? = nil,
+                             home: String = FileManager.default.homeDirectoryForCurrentUser.path) -> [BackupNoteGroup] {
         var groups: [BackupNoteGroup] = []
         for m in messages {
             let lower = m.lowercased()
@@ -39,7 +63,106 @@ public enum BackupNotes {
                 groups.append(BackupNoteGroup(cause: cause, folder: folder, paths: path.map { [$0] } ?? [], messages: [m]))
             }
         }
+        if let index {
+            for i in groups.indices where groups[i].cause != .other {
+                groups[i].extra = groups[i].pattern.flatMap { index.extra(of: $0, besides: groups[i].folders) }
+            }
+        }
+        return merge(groups, index: index, home: home)
+    }
+
+    /// Merges pairs of groups as long as some pair has an acceptable common pattern.
+    static func merge(_ input: [BackupNoteGroup], index: FolderIndex?, home: String) -> [BackupNoteGroup] {
+        var groups = input
+        // Merging compares every pair, so very long lists are left as they are.
+        guard groups.count <= 300 else { return groups }
+        var merged = true
+        while merged {
+            merged = false
+            outer: for i in groups.indices {
+                for j in groups.indices where j > i {
+                    guard groups[i].cause == groups[j].cause, groups[i].cause != .other else { continue }
+                    let folders = groups[i].folders + groups[j].folders.filter { !groups[i].folders.contains($0) }
+                    guard let c = generalize(folders, lastMayDiffer: index != nil),
+                          canSkip(prefixOf: c.display, home: home) else { continue }
+                    var extra: FolderIndex.Extra?
+                    if let index {
+                        guard let e = index.extra(of: c.pattern, besides: folders),
+                              !e.unknown, e.items <= extraBudget else { continue }
+                        extra = e
+                    } else {
+                        guard c.slots == 1 else { continue }
+                    }
+                    groups[i].folder = c.display
+                    groups[i].pattern = c.pattern
+                    groups[i].extra = extra
+                    groups[i].folders = folders
+                    groups[i].paths += groups[j].paths.filter { !groups[i].paths.contains($0) }
+                    groups[i].messages += groups[j].messages.filter { !groups[i].messages.contains($0) }
+                    groups.remove(at: j)
+                    merged = true
+                    break outer
+                }
+            }
+        }
         return groups
+    }
+
+    struct Candidate: Equatable {
+        /// The restic pattern.
+        var pattern: String
+        /// The same pattern for people, with `*` where folders differ and no escapes.
+        var display: String
+        /// How many path components differ.
+        var slots: Int
+    }
+
+    /// The narrowest pattern that matches all folders. They need the same depth. Where names differ,
+    /// their shared start and end are kept and the middle becomes `*`. The last name may only differ
+    /// when an index can check what else the pattern matches, because `/Projects/*` would skip every project.
+    static func generalize(_ folders: [String], lastMayDiffer: Bool = false) -> Candidate? {
+        let split = folders.map { $0.split(separator: "/", omittingEmptySubsequences: false).map(String.init) }
+        guard let first = split.first, split.count > 1, split.allSatisfy({ $0.count == first.count }),
+              lastMayDiffer || split.allSatisfy({ $0.last == first.last }) else { return nil }
+        var pattern: [String] = [], display: [String] = [], slots = 0
+        for k in first.indices {
+            let values = split.map { $0[k] }
+            if values.allSatisfy({ $0 == values[0] }) {
+                pattern.append(escapedPattern(values[0]))
+                display.append(values[0])
+                continue
+            }
+            slots += 1
+            let pre = commonPrefix(values)
+            let rest = values.map { String($0.dropFirst(pre.count)) }
+            let maxSuffix = rest.map(\.count).min() ?? 0
+            let suf = String(commonPrefix(rest.map { String($0.reversed()) }).reversed().suffix(maxSuffix))
+            pattern.append(escapedPattern(pre) + "*" + escapedPattern(suf))
+            display.append(pre + "*" + suf)
+        }
+        return Candidate(pattern: pattern.joined(separator: "/"), display: display.joined(separator: "/"), slots: slots)
+    }
+
+    static func commonPrefix(_ values: [String]) -> String {
+        guard var p = values.first else { return "" }
+        for v in values.dropFirst() {
+            p = String(zip(p, v).prefix { $0 == $1 }.map(\.0))
+        }
+        return p
+    }
+
+    /// False when the part before the first `*` is too broad to skip.
+    static func canSkip(prefixOf display: String, home: String) -> Bool {
+        guard let star = display.firstIndex(of: "*") else { return canSkip(display, home: home) }
+        let before = display[..<star]
+        guard let slash = before.lastIndex(of: "/") else { return false }
+        return canSkip(String(before[..<slash]), home: home)
+    }
+
+    /// False when the group's pattern could cover the home folder or one of its parents.
+    public static func canSkip(_ group: BackupNoteGroup, home: String = FileManager.default.homeDirectoryForCurrentUser.path) -> Bool {
+        guard let folder = group.folder else { return false }
+        return canSkip(prefixOf: folder, home: home)
     }
 
     /// False for folders too broad to skip from a note, such as the home folder or one of its parents.
