@@ -28,6 +28,9 @@ RESTIC="vendor/restic-$ARCH/restic"
 if [ -x "$RESTIC" ]; then
   cp "$RESTIC" "$APP/Contents/Resources/restic"
   cp LICENSE "$APP/Contents/Resources/LICENSE.txt"
+elif [ -n "${REQUIRE_RESTIC:-}" ]; then
+  echo "Error: $RESTIC not found." >&2
+  exit 1
 else
   echo "Note: $RESTIC not found. Run scripts/fetch-restic.sh to bundle restic."
   echo "      Without it the app uses a restic installed by Homebrew."
