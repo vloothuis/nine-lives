@@ -17,7 +17,7 @@ mkdir -p "$DEST"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-echo "Downloading $ASSET…"
+echo "Downloading ${ASSET}..."
 curl -fL --proto '=https' -o "$TMP/restic.bz2" \
   "https://github.com/restic/restic/releases/download/v$VERSION/$ASSET"
 
