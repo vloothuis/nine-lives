@@ -1,0 +1,11 @@
+# Only used by vendor.sh to download rustic_core 0.14.0 into the Cargo registry.
+[package]
+name = "nl-splice-fetch"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+rustic_core = "=0.14.0"
+
+[workspace]
