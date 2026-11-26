@@ -36,11 +36,25 @@ else
   echo "      Without it the app uses a restic installed by Homebrew."
 fi
 
+# nl-engine makes the snapshots; restic is still used for everything else.
+if command -v cargo >/dev/null; then
+  ENGINE="$(scripts/build-engine.sh)"
+  cp "$ENGINE" "$APP/Contents/Resources/nl-engine"
+elif [ -n "${REQUIRE_ENGINE:-}" ]; then
+  echo "Error: cargo not found, so nl-engine cannot be built." >&2
+  exit 1
+else
+  echo "Note: cargo not found, so nl-engine is not bundled. Backups use restic backup."
+fi
+
 if [ "$IDENTITY" = "-" ]; then
   codesign --force --deep --sign - "$APP"
 else
-  [ -x "$APP/Contents/Resources/restic" ] && codesign --force --options runtime \
-    --sign "$IDENTITY" "$APP/Contents/Resources/restic"
+  for tool in restic nl-engine; do
+    if [ -x "$APP/Contents/Resources/$tool" ]; then
+      codesign --force --options runtime --sign "$IDENTITY" "$APP/Contents/Resources/$tool"
+    fi
+  done
   codesign --force --options runtime --sign "$IDENTITY" "$APP"
 fi
 echo "Built $APP ($VERSION, build $BUILD)"

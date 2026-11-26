@@ -102,11 +102,13 @@ public final class BackupCoordinator {
         if let c = noteCache, c.id == r.id { return c.groups }
         let groups = BackupNotes.group(r.messages)
         noteCache = (r.id, groups)
-        if groups.contains(where: { $0.cause != .other }), let name = r.archiveName, !indexing.contains(r.id) {
+        if groups.contains(where: { $0.cause != .other }), let name = r.folderIndexSnapshot ?? r.archiveName, !indexing.contains(r.id) {
             indexing.insert(r.id)
             let url = store.folderIndexURL, messages = r.messages, id = r.id
             Task.detached(priority: .utility) { [weak self] in
-                guard let index = FolderIndex.load(from: url), index.snapshotID.hasPrefix(name) else { return }
+                // After a quick backup, the index of the full backup it was built on applies.
+                guard let index = FolderIndex.load(from: url),
+                      index.snapshotID.hasPrefix(name) || name.hasPrefix(index.snapshotID) else { return }
                 let groups = BackupNotes.group(messages, index: index)
                 await self?.setIndexedNotes(groups, for: id)
             }
@@ -168,8 +170,12 @@ public final class BackupCoordinator {
             engine = nil
             return
         }
+        let nl = EngineBinary.locate(restic: bin).map {
+            Engine(binary: $0, cacheDirectory: store.cacheDirectory.appendingPathComponent("nl-engine", isDirectory: true), ssh: sshKeys.options)
+        }
         engine = BackupEngine(
             restic: Restic(binary: bin, cacheDirectory: store.cacheDirectory, ssh: sshKeys.options),
+            engine: nl,
             secrets: secrets,
             catalogs: CatalogStore(directory: store.catalogDirectory))
     }
@@ -472,6 +478,8 @@ public final class BackupCoordinator {
             record.end = end
             record.archiveName = result.create.archiveName
             record.stats = result.create.stats
+            record.kind = result.kind
+            record.folderIndexSnapshot = result.folderIndexSnapshot
             record.messages = (migrationWarning.map { [$0] } ?? []) + result.create.warnings + result.maintenanceWarnings
             record.outcome = record.messages.isEmpty ? .success : .warning
             createdFolders = result.create.folders
@@ -488,6 +496,7 @@ public final class BackupCoordinator {
                 $0.storedSize = result.storedSize ?? $0.storedSize
                 $0.repositoryID = $0.repositoryID ?? result.repositoryID
                 $0.lastFailure = nil
+                $0.incremental = result.incremental
                 if let volume {
                     $0.capacity = volume.totalCapacity
                     $0.name = volume.name

@@ -30,6 +30,7 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
       ARCH: ${{ matrix.arch }}
       REQUIRE_RESTIC: "1"
+      REQUIRE_ENGINE: "1"
     steps:
       - uses: actions/checkout@v4
       - run: scripts/fetch-restic.sh

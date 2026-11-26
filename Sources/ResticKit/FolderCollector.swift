@@ -68,6 +68,16 @@ public final class FolderCollector: @unchecked Sendable {
         }
     }
 
+    /// Records a folder and the number of items directly in it, as nl-engine reports them.
+    public func addFolder(_ path: String, items count: Int32) {
+        var p = path
+        while p.count > 1, p.hasSuffix("/") { p.removeLast() }
+        lock.lock(); defer { lock.unlock() }
+        guard !overflowed, p.hasPrefix("/") else { return }
+        let n: Int32? = p == "/" ? 0 : p.withUTF8 { node(for: $0) }
+        if let n { items[Int(n)] = count }
+    }
+
     /// Marks a path restic reported as unreadable.
     public func addUnreadable(_ path: String) {
         var p = path

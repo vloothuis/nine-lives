@@ -80,11 +80,14 @@ public enum ProcessRunner {
     /// Runs a process, streaming stderr (and optionally stdout) line by line.
     /// Cancelling the task sends SIGINT, then SIGTERM after a grace period.
     /// The process runs with the priority in `ProcessPriority.current`, if any.
+    /// With `signalTree` false, only the process itself is signalled, so it can still use its children
+    /// (for example ssh) to clean up.
     public static func run(
         executable: URL,
         arguments: [String],
         environment: [String: String],
         currentDirectory: URL? = nil,
+        signalTree: Bool = true,
         onStdoutLine: (@Sendable (String) -> Void)? = nil,
         onStderrLine: (@Sendable (String) -> Void)? = nil
     ) async throws -> ProcessResult {
@@ -161,11 +164,15 @@ public enum ProcessRunner {
             guard process.isRunning else { return }
             let pid = process.processIdentifier
             // Signal the whole tree, so child processes such as ssh stop too.
-            ProcessTree.signal(pid, SIGINT)
+            let send: @Sendable (Int32) -> Void = { sig in
+                if signalTree { ProcessTree.signal(pid, sig) } else { kill(pid, sig) }
+            }
+            send(SIGINT)
             DispatchQueue.global().asyncAfter(deadline: .now() + 10) {
-                if process.isRunning { ProcessTree.signal(pid, SIGTERM) }
+                if process.isRunning { send(SIGTERM) }
             }
             DispatchQueue.global().asyncAfter(deadline: .now() + 20) {
+                // Children are killed too here, so a hung ssh cannot outlive the engine.
                 if process.isRunning { ProcessTree.signal(pid, SIGKILL) }
             }
         }

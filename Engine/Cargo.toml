@@ -1,5 +1,5 @@
 [package]
-name = "nl-splice"
+name = "nl-engine"
 version = "0.1.0"
 edition = "2024"
 publish = false
@@ -7,10 +7,15 @@ license = "MIT"
 
 [dependencies]
 anyhow = "1"
-ignore = "0.4.25"
+bytes = "1"
+hex = "0.4"
+libc = "0.2"
 rustic_backend = { version = "0.8.0", default-features = false }
 rustic_core = "=0.14.0"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
+signal-hook = "0.3"
 
 [patch.crates-io]
 rustic_core = { path = "vendor/rustic_core" }
