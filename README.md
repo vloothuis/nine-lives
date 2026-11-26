@@ -41,15 +41,18 @@ Versions are dates, for example `2026.11.22`. **Nine Lives, About** shows the ve
 
 ## Under the hood
 
-Nine Lives is a SwiftUI menu bar app on top of [restic](https://restic.net) 0.20, which is bundled in the download. restic always encrypts. On encrypted disks the repository password is generated and stored in your Keychain and in a file next to the backups. On other disks and on servers it is your recovery passphrase. Servers are reached over SFTP, so they need no extra software.
+Nine Lives is a SwiftUI menu bar app that makes [restic](https://restic.net) repositories, and bundles restic 0.20 in the download. Snapshots are made by nl-engine, a Rust tool in `Engine/` built on rustic_core: a quick backup reads again only the folders macOS reports as changed, and a full backup runs when that is not safe and at least every 7 days. restic does restores, checks and clean-up. restic always encrypts. On encrypted disks the repository password is generated and stored in your Keychain and in a file next to the backups. On other disks and on servers it is your recovery passphrase. Servers are reached over SFTP, so they need no extra software.
 
 ## Build from source
 
 ```bash
 swift test                 # needs restic installed (brew install restic)
 scripts/fetch-restic.sh    # downloads and checksum-verifies the official restic binary
-scripts/bundle.sh          # produces dist/Nine Lives.app
+scripts/bundle.sh          # produces dist/Nine Lives.app, and builds nl-engine when cargo is installed
+scripts/e2e.sh             # end-to-end test of the built app on a disk image
 ```
+
+nl-engine needs Rust (`rustup`). `Engine/vendor.sh` copies rustic_core from the Cargo registry and applies `Engine/rustic_core.patch`; then `cargo build --release --locked` in `Engine/` builds it. The engine's own tests are `cargo test` and the scripts in `Engine/tests/`.
 
 Set `SIGN_IDENTITY="Developer ID Application: …"` for a hardened-runtime build. Without a bundled restic the app falls back to `/opt/homebrew/bin/restic`.
 
@@ -59,7 +62,7 @@ Set `SIGN_IDENTITY="Developer ID Application: …"` for a hardened-runtime build
 
 Releases are built by the **Release** GitHub Action (run it from the Actions tab). It builds both architectures and publishes DMGs with checksums.
 
-Use `NINELIVES_RESTIC` to point at another restic install. The SSH lifecycle test runs only when `NINELIVES_TEST_SSH=port:authorized_keys_file` points at a local sshd.
+Use `NINELIVES_RESTIC` to point at another restic install, and `NINELIVES_ENGINE` at another nl-engine. The SSH lifecycle test runs only when `NINELIVES_TEST_SSH=port:authorized_keys_file` points at a local sshd.
 
 ## Not done yet
 

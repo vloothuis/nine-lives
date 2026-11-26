@@ -251,16 +251,18 @@ What must be protected:
 | A splice bug keeps a wrong node, and every later sweep trusts it | The parent is never changed. CI compares splices with sweeps by root tree ID over many cases. Monthly verification restores random files and runs `check --read-data-subset`. A monthly `--force` sweep reads all file data again, so wrong content cannot survive for long |
 | The engine's filter and restic's disagree, so files are silently left out | The filter is a port of restic's, tested against 12,000 answers computed by restic. A test backs up one tree with both programs and compares `restic ls` |
 | The archiver gets items out of order and silently misses the parent or duplicates names | The walker sorts and checks the order, and sources are de-nested. Tests with names such as `a`, `a-b`, `a.txt`, `a/b` and non-ASCII names |
-| The parent is silently dropped, so a sweep re-reads everything | The parent is looked up by ID, and the engine fails if it is not used |
+| The parent is silently dropped, so a sweep re-reads everything | The parent is looked up by ID. If it is not used, the snapshot is still complete, and the engine's warning goes into the backup's notes |
 | An unreadable folder is stored as an empty folder | The folder is opened before its node is written. If that fails it is left out and reported |
 | A hard-linked file changes through a folder that was not reported | The splice reports changed files with several links, and the next backup is a sweep |
 | Another process prunes while the engine writes | Restic-format lock with the real host and process ID, refreshed. The engine refuses to start with a fresh exclusive lock, and refuses to save after its lock went stale |
 | Crash or kill halfway | Data packs, then index and trees, are written before the snapshot, which is one file. Nothing refers to unfinished packs. The next prune removes them. `restic unlock` sees the dead process and removes the lock |
 | SFTP connection drops while writing | Temporary name, then rename. A file is only listed under its final name once complete |
 | SFTP server hangs | A timeout on every request |
-| Man in the middle on SFTP | The same ssh command as today: own known-hosts file, `StrictHostKeyChecking=accept-new`, key only, no agent, no prompts |
+| Man in the middle on SFTP | The same ssh command as today: own known-hosts file, `StrictHostKeyChecking=accept-new`, key only (`IdentitiesOnly`, `IdentityAgent=none`), no prompts |
 | Shell injection through the ssh command | The command is passed as a JSON array and run without a shell |
-| Password exposure | From the environment only, never in arguments, logs or JSON output. The environment of the child is built from scratch, as for restic |
+| Password exposure | From the environment only, never in arguments, logs or JSON output. The environment of the child is built from scratch, as for restic. The engine removes the password from the environment of ssh, so a `ProxyCommand` in the user's ssh config cannot read it |
+| File paths in the system log | Engine warnings and error summaries are logged with the default private level, so paths are redacted in `log show` unless the Mac is set to show private data |
+| `NINELIVES_ENGINE` points at another binary | A development override, read from the app's own environment. Whoever can set that environment can already run code as the user |
 | Change list or arguments point outside the sources | Paths must be absolute, without `.` or `..`, and inside a source. Links are stored, never followed |
 | A malicious file name breaks the JSON or the notes | Paths are JSON-escaped by `serde_json`. Swift treats every path as data |
 | Tampered repository on a server | As with restic: everything is encrypted and authenticated, and rustic checks each blob it reads. The repository ID check before each backup stays |
@@ -281,8 +283,9 @@ What must be protected:
 - **Locks:** `restic prune` during an engine run must fail; `restic unlock` after `kill -9` of the engine
   must remove its lock.
 - **Upgrade:** the engine's first sweep of a restic-made repository has no new files and adds only trees.
-- **SFTP:** the comparison tests also run against a local SFTP server (`sshd` on localhost with a throwaway
-  key) when available, and in CI.
+- **SFTP:** with `NL_ENGINE_SFTP=1` the comparison, cross-check and lock tests run over SFTP, with
+  OpenSSH's `sftp-server` started directly instead of ssh. `sftp_faults.sh` puts a proxy in between that
+  drops or stalls the connection. All of these run in CI.
 - **Swift unit tests:** the incremental-or-full decision table, JSON parsing, notes carry-over, escaping of
   path choices.
 - **Property tests:** `Engine/tests/splice_props.rs` builds random trees and applies random changes

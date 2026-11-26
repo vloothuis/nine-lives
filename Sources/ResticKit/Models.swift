@@ -88,7 +88,7 @@ public struct SSHOptions: Sendable {
 
     /// Arguments for ssh. Never prompts, fails fast, ignores multiplexing, and notices dead connections.
     var arguments: [String] {
-        ["-i", keyFile.path, "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes",
+        ["-i", keyFile.path, "-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=none", "-o", "BatchMode=yes",
          "-o", "UserKnownHostsFile=" + knownHostsFile.path, "-o", "StrictHostKeyChecking=accept-new",
          "-o", "ControlMaster=no", "-o", "ControlPath=none", "-o", "GSSAPIAuthentication=no",
          "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=6"]

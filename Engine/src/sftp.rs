@@ -227,6 +227,8 @@ impl Conn {
         let (prog, args) = argv.split_first().context("the ssh command is empty")?;
         let mut child = Command::new(prog)
             .args(args)
+            // ssh, and any ProxyCommand in the user's ssh config, never sees the repository password.
+            .env_remove("NL_ENGINE_PASSWORD")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

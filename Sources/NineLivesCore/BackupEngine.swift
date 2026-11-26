@@ -600,7 +600,7 @@ public final class BackupEngine: Sendable {
                 next.hardLinksChanged = r.hardLinksChanged
                 return MadeBackup(create: create, kind: .quick, folderIndexSnapshot: state.sweepSnapshotID, incremental: next)
             } catch let e as ResticError where !(e.isConnectionProblem || e.isLockProblem || e.isWrongPassphrase || e.isOutOfSpace) {
-                backupLog.error("Quick backup failed, making a full backup: \(e.summary, privacy: .public)")
+                backupLog.error("Quick backup failed, making a full backup: \(e.summary)")
                 notes.append("The quick backup failed, so a full backup was made instead: \(e.summary)")
                 decision = .full(reason: "the quick backup failed", force: false)
             }
@@ -617,7 +617,10 @@ public final class BackupEngine: Sendable {
         if let state, state.snapshotID != state.sweepSnapshotID, r.filesNew + r.filesChanged > 0 {
             backupLog.info("Full backup after quick backups found \(r.filesNew) new and \(r.filesChanged) changed files")
         }
-        for w in r.engineWarnings { backupLog.notice("Engine: \(w, privacy: .public)") }
+        // Warnings can hold file paths, so they stay private in the system log. They also go into
+        // the backup's notes, such as a parent snapshot that could not be used.
+        for w in r.engineWarnings { backupLog.notice("Engine: \(w)") }
+        notes += r.engineWarnings.prefix(20)
         var create = r.create
         create.warnings = notes + create.warnings
         let now = Date()

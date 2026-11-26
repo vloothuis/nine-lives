@@ -40,6 +40,7 @@ fi
 if command -v cargo >/dev/null; then
   ENGINE="$(scripts/build-engine.sh)"
   cp "$ENGINE" "$APP/Contents/Resources/nl-engine"
+  scripts/engine-notices.py "$APP/Contents/Resources/nl-engine notices.txt"
 elif [ -n "${REQUIRE_ENGINE:-}" ]; then
   echo "Error: cargo not found, so nl-engine cannot be built." >&2
   exit 1
