@@ -285,4 +285,14 @@ What must be protected:
   key) when available, and in CI.
 - **Swift unit tests:** the incremental-or-full decision table, JSON parsing, notes carry-over, escaping of
   path choices.
-- **End to end:** the app bundle backs up to a disk image, incrementally and in full, and restores with restic.
+- **Property tests:** `Engine/tests/splice_props.rs` builds random trees and applies random changes
+  (files, folders, renames, deletions, links, markers, unreadable files). After each round, a splice over
+  the folders FSEvents would report must give the same root tree and totals as a `--force` sweep. CI runs
+  16 cases; set `PROPTEST_CASES` for more. In Swift, random cases check that any failed check gives a
+  full backup, that the skipper never skips the way to a kept path, that it skips only what restic's
+  matcher excludes, and the rules of `covers` and `canonical`.
+- **End to end:** `scripts/e2e.sh` builds the app and mounts an APFS disk image. `EndToEndTests` then
+  runs `BackupEngine` with the restic and nl-engine inside the app: a full backup, three rounds of quick
+  backups with changes made right before each one, a run without changes, and a full backup after a rule
+  change. After each round restic restores the newest snapshot, which must match the source, and
+  `check --read-data` must pass.

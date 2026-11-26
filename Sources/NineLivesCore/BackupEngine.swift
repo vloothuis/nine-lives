@@ -554,6 +554,9 @@ public final class BackupEngine: Sendable {
         var incremental: IncrementalState?
     }
 
+    /// Replaced in tests, which run without Full Disk Access.
+    nonisolated(unsafe) static var fullDiskAccess: @Sendable () -> Bool = Permissions.hasFullDiskAccess
+
     /// Backs up with nl-engine: a splice of the folders FSEvents reports as changed when that is safe,
     /// otherwise a full sweep. A failed splice is followed by a sweep in the same run.
     private func engineBackup(
@@ -563,7 +566,7 @@ public final class BackupEngine: Sendable {
         // Taken before anything is read, so changes made during the backup are seen next time.
         let startEvent = ChangeTracker.currentEventID
         let volumes = ChangeTracker.volumes(of: options.sources)
-        let fda = Permissions.hasFullDiskAccess()
+        let fda = Self.fullDiskAccess()
         let state = disk.incremental
         var facts = ChangeFacts(
             state: state, newestSnapshotID: nil, configHash: ChangeTracker.configHash(options), volumeUUIDs: volumes.uuids,

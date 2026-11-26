@@ -24,3 +24,6 @@ rustic_core = { path = "vendor/rustic_core" }
 lto = "thin"
 
 [workspace]
+
+[dev-dependencies]
+proptest = "1"

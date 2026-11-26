@@ -181,6 +181,7 @@ fn summary(out: &Out, repo: &Repo, kind: &str, snap: &SnapshotFile, hard_links_c
         "type": "summary",
         "snapshot_id": snap.id.to_hex().to_string(),
         "parent": snap.parent.map(|p| p.to_hex().to_string()),
+        "tree": snap.tree.to_hex().to_string(),
         "kind": if kind == "backup" { "backup" } else { "splice" },
         "files": s.total_files_processed,
         "bytes": s.total_bytes_processed,

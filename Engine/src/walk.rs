@@ -12,7 +12,8 @@ use std::{
 
 use anyhow::{Result, bail};
 use rustic_core::{
-    LocalSourceSaveOptions, OpenFile, ReadSource, ReadSourceEntry, RusticResult, repofile::Node,
+    LocalSourceSaveOptions, OpenFile, ReadSource, ReadSourceEntry, RusticResult,
+    repofile::{Metadata as NodeMetadata, Node, NodeType},
 };
 
 use crate::{
@@ -185,7 +186,13 @@ impl ReadSource for Sweep {
     }
 
     fn entries(&self) -> Self::Iter {
-        SweepIter { walker: self.0.clone(), roots: self.0.roots().cloned().collect::<Vec<_>>().into_iter(), stack: Vec::new(), last: None }
+        SweepIter {
+            walker: self.0.clone(),
+            roots: self.0.roots().cloned().collect::<Vec<_>>().into_iter(),
+            stack: Vec::new(),
+            empty_root: None,
+            last: None,
+        }
     }
 }
 
@@ -194,6 +201,8 @@ pub struct SweepIter {
     walker: Walker,
     roots: std::vec::IntoIter<PathBuf>,
     stack: Vec<std::vec::IntoIter<Entry>>,
+    /// The current source while nothing in it has been emitted yet.
+    empty_root: Option<PathBuf>,
     /// The last path returned, to check the order the archiver needs.
     last: Option<PathBuf>,
 }
@@ -208,6 +217,7 @@ impl SweepIter {
                     Ok(children) => {
                         self.walker.out.folder(&root, children.len());
                         self.stack.push(children.into_iter());
+                        self.empty_root = Some(root);
                     }
                     Err(e) => self.walker.out.error(&root, e),
                 }
@@ -215,6 +225,17 @@ impl SweepIter {
             };
             let Some(entry) = top.next() else {
                 _ = self.stack.pop();
+                if self.stack.is_empty()
+                    && let Some(root) = self.empty_root.take()
+                    && let Some(name) = root.file_name()
+                {
+                    // rustic only makes the folders of a source on the way to an item, so a source
+                    // with nothing in it would be missing. restic keeps it. This is the node rustic
+                    // makes for such folders, so a splice that keeps it from the parent agrees.
+                    let meta = NodeMetadata { mode: Some(0o755), ..Default::default() };
+                    let node = Node::new_node(name, NodeType::Dir, meta);
+                    return Some(Entry { path: root, node, open: None });
+                }
                 continue;
             };
             self.walker.out.item(&entry.path);
@@ -231,6 +252,7 @@ impl SweepIter {
                     }
                 }
             }
+            self.empty_root = None;
             return Some(entry);
         }
     }
