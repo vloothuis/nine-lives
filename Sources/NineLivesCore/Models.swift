@@ -141,6 +141,8 @@ public struct BackupSettings: Codable, Equatable, Sendable {
     public var answeredRuleIDs: [String]
     /// Answers for single items: true backs the path up, false skips it. They win over the rules.
     public var pathChoices: [String: Bool]
+    /// Hidden: back up with `restic backup` instead of nl-engine. Kept for one release as a fallback.
+    public var useResticBackup: Bool
 
     public init(
         sources: [String] = [NSHomeDirectory()],
@@ -154,7 +156,8 @@ public struct BackupSettings: Codable, Equatable, Sendable {
         pauseOnLowBattery: Bool = true,
         enginePathOverride: String? = nil,
         answeredRuleIDs: [String] = [],
-        pathChoices: [String: Bool] = [:]
+        pathChoices: [String: Bool] = [:],
+        useResticBackup: Bool = false
     ) {
         self.sources = sources
         self.rules = rules
@@ -168,6 +171,7 @@ public struct BackupSettings: Codable, Equatable, Sendable {
         self.enginePathOverride = enginePathOverride
         self.answeredRuleIDs = answeredRuleIDs
         self.pathChoices = pathChoices
+        self.useResticBackup = useResticBackup
     }
 
     /// Missing keys fall back to defaults, so files written by older versions keep loading.
@@ -187,16 +191,27 @@ public struct BackupSettings: Codable, Equatable, Sendable {
         enginePathOverride = try c.decodeIfPresent(String.self, forKey: .enginePathOverride)
         answeredRuleIDs = try c.decodeIfPresent([String].self, forKey: .answeredRuleIDs) ?? []
         pathChoices = try c.decodeIfPresent([String: Bool].self, forKey: .pathChoices) ?? [:]
+        useResticBackup = try c.decodeIfPresent(Bool.self, forKey: .useResticBackup) ?? false
     }
 
     public func excludePatterns(home: String = NSHomeDirectory()) -> [String] {
-        let skipped = pathChoices.filter { !$0.value }.keys.sorted()
+        let skipped = pathChoices.filter { !$0.value }.keys.sorted().map(Self.escapePattern)
         return (rules.filter(\.enabled) + DefaultRules.always).compactMap { $0.pattern(home: home) } + skipped
     }
 
     /// Paths the user chose to back up although a rule skips them.
     public var includePatterns: [String] {
-        pathChoices.filter(\.value).keys.sorted()
+        pathChoices.filter(\.value).keys.sorted().map(Self.escapePattern)
+    }
+
+    /// A path as a pattern that matches only itself: `\`, `*`, `?`, `[` and `]` lose their meaning.
+    public static func escapePattern(_ path: String) -> String {
+        var out = ""
+        for ch in path {
+            if "\\*?[]".contains(ch) { out.append("\\") }
+            out.append(ch)
+        }
+        return out
     }
 
     /// File names that make restic skip the folder that holds them.
@@ -297,6 +312,8 @@ public struct KnownDisk: Codable, Identifiable, Equatable, Sendable {
     public var format: RepositoryFormat?
     /// While switching from borg: the folder of the old borg backups, removed after the first restic backup.
     public var legacyFolder: String?
+    /// What the next backup needs to decide whether it can be incremental. Nil forces a full backup.
+    public var incremental: IncrementalState?
 
     public var isRemote: Bool { remote != nil }
     public var needsMigration: Bool { format != .restic }
@@ -327,6 +344,8 @@ public enum BackupTrigger: String, Codable, Sendable {
 
 public struct BackupRecord: Codable, Identifiable, Equatable, Sendable {
     public enum Outcome: String, Codable, Sendable { case success, warning, failed, cancelled }
+    /// `quick` rebuilt only changed folders; `full` looked at every folder.
+    public enum Kind: String, Codable, Sendable { case quick, full }
 
     public var id: UUID
     public var diskID: String
@@ -340,6 +359,11 @@ public struct BackupRecord: Codable, Identifiable, Equatable, Sendable {
     /// Technical output of a failure, shown on request.
     public var details: String?
     public var trigger: BackupTrigger
+    /// Nil for records written by older versions.
+    public var kind: Kind?
+    /// The snapshot whose folder index applies to this backup: its own, or after a quick backup the
+    /// full backup it was built on.
+    public var folderIndexSnapshot: String?
 
     public init(
         id: UUID = UUID(), diskID: String, diskName: String, start: Date, end: Date, outcome: Outcome,

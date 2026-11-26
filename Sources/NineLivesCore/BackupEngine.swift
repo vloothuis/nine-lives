@@ -1,5 +1,8 @@
 import Foundation
+import os
 import ResticKit
+
+let backupLog = Logger(subsystem: "com.ninelives.app", category: "backup")
 
 public enum EngineError: LocalizedError, Equatable {
     case engineMissing
@@ -63,6 +66,11 @@ public enum ExistingRepository: Equatable, Sendable {
 
 public struct BackupRunResult: Sendable {
     public var create: CreateResult
+    public var kind: BackupRecord.Kind
+    /// The snapshot whose folder index applies to the new snapshot.
+    public var folderIndexSnapshot: String?
+    /// What the next backup needs to decide. Nil when the next one must be full.
+    public var incremental: IncrementalState?
     public var storedSize: Int64?
     public var repositoryID: String?
     public var maintenanceWarnings: [String]
@@ -86,6 +94,8 @@ public enum RestoreTarget: Sendable {
 /// Runs the backup, verification and restore workflows for one disk. Holds no mutable state.
 public final class BackupEngine: Sendable {
     public let restic: Restic
+    /// nl-engine, which makes the snapshots. Without it, `restic backup` is used.
+    public let engine: Engine?
     public let secrets: SecretStore
     public let catalogs: CatalogStore
 
@@ -94,8 +104,9 @@ public final class BackupEngine: Sendable {
     /// Suffix of the folder that holds the new backups while the old borg backups still exist.
     static let migrationSuffix = "-restic"
 
-    public init(restic: Restic, secrets: SecretStore, catalogs: CatalogStore) {
+    public init(restic: Restic, engine: Engine? = nil, secrets: SecretStore, catalogs: CatalogStore) {
         self.restic = restic
+        self.engine = engine
         self.secrets = secrets
         self.catalogs = catalogs
     }
@@ -499,9 +510,16 @@ public final class BackupEngine: Sendable {
         let options = CreateOptions(
             sources: sources, excludePatterns: settings.excludePatterns(), includePatterns: settings.includePatterns,
             excludeIfPresent: [".nobackup"] + settings.excludeMarkers, host: Machine.backupHost, tag: Self.tag)
-        let created = try await recovering(repo) {
-            try await restic.backup(repo: repo, options: options, progress: progress)
+        let made: MadeBackup
+        if let engine, !settings.useResticBackup {
+            made = try await engineBackup(engine, disk: disk, repo: repo, options: options, progress: progress)
+        } else {
+            let created = try await recovering(repo) {
+                try await restic.backup(repo: repo, options: options, progress: progress)
+            }
+            made = MadeBackup(create: created, kind: .full, folderIndexSnapshot: created.archiveID, incremental: nil)
         }
+        let created = made.create
 
         var warnings: [String] = []
         do {
@@ -524,7 +542,100 @@ public final class BackupEngine: Sendable {
         // Keeps the readme opening this copy of the app, also after it was moved or updated.
         if !repo.isRemote { OpenWith.set(on: Self.readmeURL(near: repo.url)) }
         let stored = try? await restic.storedSize(repo: try self.repo(for: updated, on: volume))
-        return BackupRunResult(create: created, storedSize: stored, repositoryID: id, maintenanceWarnings: warnings, disk: updated)
+        return BackupRunResult(
+            create: created, kind: made.kind, folderIndexSnapshot: made.folderIndexSnapshot, incremental: made.incremental,
+            storedSize: stored, repositoryID: id, maintenanceWarnings: warnings, disk: updated)
+    }
+
+    struct MadeBackup {
+        var create: CreateResult
+        var kind: BackupRecord.Kind
+        var folderIndexSnapshot: String?
+        var incremental: IncrementalState?
+    }
+
+    /// Replaced in tests, which run without Full Disk Access.
+    nonisolated(unsafe) static var fullDiskAccess: @Sendable () -> Bool = Permissions.hasFullDiskAccess
+
+    /// Backs up with nl-engine: a splice of the folders FSEvents reports as changed when that is safe,
+    /// otherwise a full sweep. A failed splice is followed by a sweep in the same run.
+    private func engineBackup(
+        _ engine: Engine, disk: KnownDisk, repo: ResticRepo, options: CreateOptions,
+        progress: @escaping @Sendable (CreateProgress) -> Void
+    ) async throws -> MadeBackup {
+        // Taken before anything is read, so changes made during the backup are seen next time.
+        let startEvent = ChangeTracker.currentEventID
+        let volumes = ChangeTracker.volumes(of: options.sources)
+        let fda = Self.fullDiskAccess()
+        let state = disk.incremental
+        var facts = ChangeFacts(
+            state: state, newestSnapshotID: nil, configHash: ChangeTracker.configHash(options), volumeUUIDs: volumes.uuids,
+            currentEventID: startEvent, sourcesInternal: volumes.onInternal, history: nil, fullDiskAccess: fda,
+            onMainsPower: !PowerState.current().onBattery, now: Date())
+        facts.newestSnapshotID = try await recovering(repo) { try await restic.listArchives(repo: repo, tag: Self.tag) }.first?.id
+        if let state {
+            if ChangeTracker.precheck(facts) == nil {
+                let skipper = PathSkipper(patterns: options.excludePatterns, includes: options.includePatterns)
+                facts.history = await ChangeTracker.history(since: state.eventID, sources: options.sources, skip: { skipper.skips($0) })
+            }
+        }
+        var decision = ChangeTracker.decide(facts)
+        var notes: [String] = []
+
+        if case .incremental(let changes) = decision, let state {
+            do {
+                let r = try await recovering(repo) {
+                    try await engine.backup(repo: repo, options: options, run: .splice(parent: state.snapshotID, changes: changes), progress: progress)
+                }
+                backupLog.info("Quick backup of \(changes.count) changed folders: \(r.filesNew) new, \(r.filesChanged) changed files")
+                // Items the last sweep could not read stay out of the snapshot. Repeat them, except where
+                // this splice looked again.
+                let kept = state.sweepErrors.filter { e in !changes.contains { Self.covers($0, e.path) } }
+                var create = r.create
+                create.warnings = Array((r.errors + kept).map(\.resticStyle).prefix(200))
+                var next = state
+                next.snapshotID = r.create.archiveID
+                next.eventID = startEvent
+                next.sweepErrors = Array((kept + r.errors).prefix(2000))
+                next.hardLinksChanged = r.hardLinksChanged
+                return MadeBackup(create: create, kind: .quick, folderIndexSnapshot: state.sweepSnapshotID, incremental: next)
+            } catch let e as ResticError where !(e.isConnectionProblem || e.isLockProblem || e.isWrongPassphrase || e.isOutOfSpace) {
+                backupLog.error("Quick backup failed, making a full backup: \(e.summary)")
+                notes.append("The quick backup failed, so a full backup was made instead: \(e.summary)")
+                decision = .full(reason: "the quick backup failed", force: false)
+            }
+        }
+
+        guard case .full(let reason, let force) = decision else { preconditionFailure("decided above") }
+        backupLog.info("Full backup\(force ? " reading all files" : ""): \(reason, privacy: .public)")
+        // The newest snapshot is the parent, also when it was made by restic: files whose size and
+        // modification time match are not read again.
+        let parent = facts.newestSnapshotID
+        let r = try await recovering(repo) {
+            try await engine.backup(repo: repo, options: options, run: .sweep(parent: parent, force: force), progress: progress)
+        }
+        if let state, state.snapshotID != state.sweepSnapshotID, r.filesNew + r.filesChanged > 0 {
+            backupLog.info("Full backup after quick backups found \(r.filesNew) new and \(r.filesChanged) changed files")
+        }
+        // Warnings can hold file paths, so they stay private in the system log. They also go into
+        // the backup's notes, such as a parent snapshot that could not be used.
+        for w in r.engineWarnings { backupLog.notice("Engine: \(w)") }
+        notes += r.engineWarnings.prefix(20)
+        var create = r.create
+        create.warnings = notes + create.warnings
+        let now = Date()
+        let next = IncrementalState(
+            snapshotID: r.create.archiveID, eventID: startEvent, volumeUUIDs: volumes.uuids, configHash: facts.configHash,
+            lastSweep: now, lastForcedSweep: force ? now : state?.lastForcedSweep, sweepSnapshotID: r.create.archiveID,
+            sweepErrors: Array(r.errors.prefix(2000)), fullDiskAccess: fda, hardLinksChanged: false)
+        return MadeBackup(create: create, kind: .full, folderIndexSnapshot: r.create.archiveID, incremental: next)
+    }
+
+    /// True when a splice that got `change` reads `path` again: the folder itself, an item directly in
+    /// it, or anything below a recursive entry.
+    static func covers(_ change: ChangedFolder, _ path: String) -> Bool {
+        if change.recursive { return ChangeTracker.isInside(path, change.path) }
+        return path == change.path || (path as NSString).deletingLastPathComponent == change.path
     }
 
     // MARK: - Browsing and restoring

@@ -88,17 +88,21 @@ public struct SSHOptions: Sendable {
 
     /// Arguments for ssh. Never prompts, fails fast, ignores multiplexing, and notices dead connections.
     var arguments: [String] {
-        ["-i", keyFile.path, "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes",
+        ["-i", keyFile.path, "-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=none", "-o", "BatchMode=yes",
          "-o", "UserKnownHostsFile=" + knownHostsFile.path, "-o", "StrictHostKeyChecking=accept-new",
          "-o", "ControlMaster=no", "-o", "ControlPath=none", "-o", "GSSAPIAuthentication=no",
          "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=6"]
     }
 
+    /// The ssh command that starts SFTP on the server, as separate arguments.
+    func sftpArguments(_ remote: SFTPLocation) -> [String] {
+        ["/usr/bin/ssh"] + arguments + ["-p", String(remote.port), "\(remote.user)@\(remote.host)", "-s", "sftp"]
+    }
+
     /// Value for restic's `sftp.command` option.
     func sftpCommand(_ remote: SFTPLocation) -> String {
         func q(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
-        let parts = ["/usr/bin/ssh"] + arguments + ["-p", String(remote.port), "\(remote.user)@\(remote.host)", "-s", "sftp"]
-        return parts.map(q).joined(separator: " ")
+        return sftpArguments(remote).map(q).joined(separator: " ")
     }
 }
 

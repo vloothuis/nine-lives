@@ -49,11 +49,25 @@ private extension BackupRecord {
     }
 
     var title: String {
-        switch outcome {
-        case .success: "Backup to \(diskName)"
-        case .warning: "Backup to \(diskName) with notes"
-        case .failed: "Backup to \(diskName) failed"
-        case .cancelled: "Backup to \(diskName) stopped"
+        let what = switch kind {
+        case .quick: "Quick backup"
+        case .full: "Full backup"
+        case nil: "Backup"
+        }
+        return switch outcome {
+        case .success: "\(what) to \(diskName)"
+        case .warning: "\(what) to \(diskName) with notes"
+        case .failed: "\(what) to \(diskName) failed"
+        case .cancelled: "\(what) to \(diskName) stopped"
+        }
+    }
+
+    /// Explains the two kinds of backup in the details.
+    var kindText: String? {
+        switch kind {
+        case .quick: "Only folders that changed since the last backup were read."
+        case .full: "Every folder was checked."
+        case nil: nil
         }
     }
 
@@ -98,6 +112,7 @@ private struct RecordDetail: View {
                     row("Started", record.start.formatted(date: .abbreviated, time: .standard))
                     row("Took", Fmt.duration(record.end.timeIntervalSince(record.start)))
                     row("Why", record.triggerText)
+                    if let k = record.kindText { row("Kind", k) }
                     if let stats = record.statsLike { row("Result", Fmt.summary(stats)) }
                     if let name = record.archiveName { row("Snapshot", name) }
                 }

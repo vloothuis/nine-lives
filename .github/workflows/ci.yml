@@ -6,8 +6,32 @@ on:
 jobs:
   test:
     runs-on: macos-26
+    env:
+      NL_ENGINE_PASSWORD: test
     steps:
       - uses: actions/checkout@v4
       - run: brew install restic
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            Engine/target
+          key: engine-${{ hashFiles('Engine/Cargo.lock', 'Engine/rustic_core.patch') }}
+      - name: Build nl-engine
+        working-directory: Engine
+        run: |
+          ./vendor.sh
+          cargo build --release --locked
+      - name: Engine unit tests
+        working-directory: Engine
+        run: cargo test --release --locked
+      - name: Engine tests
+        working-directory: Engine
+        run: |
+          for t in compare restic_crosscheck locks; do
+            tests/$t.sh
+            NL_ENGINE_SFTP=1 tests/$t.sh
+          done
+          tests/sftp_faults.sh
       - run: swift build
       - run: swift test

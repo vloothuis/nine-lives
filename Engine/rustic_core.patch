@@ -1,0 +1,256 @@
+diff -ruN -x target rustic_core.orig/src/archiver/file_archiver.rs rustic_core/src/archiver/file_archiver.rs
+--- rustic_core.orig/src/archiver/file_archiver.rs	2026-11-25 22:10:51
++++ rustic_core/src/archiver/file_archiver.rs	2026-11-25 22:10:51
+@@ -144,7 +144,7 @@
+     }
+ 
+     // TODO: add documentation!
+-    fn backup_reader(
++    pub(crate) fn backup_reader(
+         &self,
+         r: impl Read + Send + 'static,
+         node: Node,
+diff -ruN -x target rustic_core.orig/src/backend/decrypt.rs rustic_core/src/backend/decrypt.rs
+--- rustic_core.orig/src/backend/decrypt.rs	2026-11-25 22:10:51
++++ rustic_core/src/backend/decrypt.rs	2026-11-25 22:10:51
+@@ -418,7 +418,7 @@
+     }
+ 
+     /// Decrypt and potentially decompress an already read repository file
+-    fn decrypt_file(&self, data: &[u8]) -> RusticResult<Vec<u8>> {
++    pub(crate) fn decrypt_file(&self, data: &[u8]) -> RusticResult<Vec<u8>> {
+         let decrypted = self.decrypt(data)?;
+         Ok(match decrypted.first() {
+             Some(b'{' | b'[') => decrypted, // not compressed
+@@ -439,7 +439,7 @@
+     }
+ 
+     /// encrypt and potentially compress a repository file
+-    fn encrypt_file(&self, data: &[u8]) -> RusticResult<Vec<u8>> {
++    pub(crate) fn encrypt_file(&self, data: &[u8]) -> RusticResult<Vec<u8>> {
+         let data_encrypted = match self.zstd {
+             Some(level) => {
+                 let mut out = vec![2_u8];
+diff -ruN -x target rustic_core.orig/src/backend/ignore/mapper.rs rustic_core/src/backend/ignore/mapper.rs
+--- rustic_core.orig/src/backend/ignore/mapper.rs	2026-11-25 22:10:51
++++ rustic_core/src/backend/ignore/mapper.rs	2026-11-25 22:10:51
+@@ -86,32 +86,46 @@
+                 name: name.to_string_lossy().to_string(),
+                 source: err,
+             })?;
++        self.map_path(entry.into_path(), &m)
++    }
+ 
++    /// Maps a path and its metadata (from `symlink_metadata`) to a [`ReadSourceEntry`].
++    ///
++    /// This gives the same node as [`Self::map_entry`] for a walker that does not follow links.
++    ///
++    /// # Errors
++    ///
++    /// * If the target of a symbolic link could not be read.
++    pub fn map_path(
++        self,
++        path: std::path::PathBuf,
++        m: &std::fs::Metadata,
++    ) -> IgnoreResult<ReadSourceEntry<OpenFile>> {
+         let mtime = m.modified().ok().and_then(|t| Timestamp::try_from(t).ok());
+         let atime = || m.accessed().ok().and_then(|t| Timestamp::try_from(t).ok());
+         let atime = self
+             .set_atime
+             .unwrap_or(TimeOption::Mtime)
+             .map_or_else(atime, mtime);
+-        let ctime = || Self::ctime(&m);
++        let ctime = || Self::ctime(m);
+         let ctime = self
+             .set_ctime
+             .unwrap_or(TimeOption::Yes)
+             .map_or_else(ctime, mtime);
+ 
+-        let (uid, user, gid, group) = Self::user_group(&m);
++        let (uid, user, gid, group) = Self::user_group(m);
+         let size = if m.is_dir() { 0 } else { m.len() };
+         let device_id = self
+             .set_devid
+             .unwrap_or_default()
+-            .map_or_else(|| Self::device_id(&m), Self::hardlink(&m));
++            .map_or_else(|| Self::device_id(m), Self::hardlink(m));
+         let xattr = || {
+-            Self::xattrs(entry.path())
++            Self::xattrs(&path)
+                 .inspect_err(|err| warn!("ignoring error obtaining xargs: {err}"))
+                 .unwrap_or_default()
+         };
+         let extended_attributes = self.set_xattrs.unwrap_or_default().map_or_else(xattr);
+-        let (mode, inode, links) = Self::nix_infos(&m);
++        let (mode, inode, links) = Self::nix_infos(m);
+ 
+         let meta = Metadata {
+             mode,
+@@ -129,23 +143,16 @@
+             extended_attributes,
+         };
+ 
+-        let node = self.to_node(&entry, &m, meta)?;
+-        let path = entry.into_path();
++        let node = self.to_node(&path, m, meta)?;
+         let open = Some(OpenFile(path.clone()));
+         Ok(ReadSourceEntry { path, node, open })
+     }
+ 
+-    fn to_node(
+-        self,
+-        entry: &DirEntry,
+-        m: &std::fs::Metadata,
+-        meta: Metadata,
+-    ) -> IgnoreResult<Node> {
+-        let name = entry.file_name();
++    fn to_node(self, path: &Path, m: &std::fs::Metadata, meta: Metadata) -> IgnoreResult<Node> {
++        let name = path.file_name().unwrap_or(path.as_os_str());
+         let node = if m.is_dir() {
+             Node::new_node(name, NodeType::Dir, meta)
+         } else if m.is_symlink() {
+-            let path = entry.path();
+             let target = std::fs::read_link(path).map_err(|err| IgnoreErrorKind::ErrorLink {
+                 path: path.to_path_buf(),
+                 source: err,
+diff -ruN -x target rustic_core.orig/src/lib.rs rustic_core/src/lib.rs
+--- rustic_core.orig/src/lib.rs	2026-11-25 22:10:51
++++ rustic_core/src/lib.rs	2026-11-25 22:10:51
+@@ -134,7 +134,7 @@
+         ReadSourceOpen, RepositoryBackends, WriteBackend,
+         childstdout::ChildStdoutSource,
+         decrypt::{compression_level_range, max_compression_level},
+-        ignore::{LocalSource, LocalSourceFilterOptions, LocalSourceSaveOptions},
++        ignore::{LocalSource, LocalSourceFilterOptions, LocalSourceSaveOptions, OpenFile},
+         local_destination::LocalDestination,
+         node::{
+             last_modified_node,
+@@ -176,7 +176,7 @@
+     },
+     repository::{
+         IndexedFull, IndexedFullStatus, IndexedIds, IndexedIdsStatus, IndexedTree,
+-        IndexedTreesStatus, Open, OpenStatus, Repository, RepositoryOptions,
++        IndexedTreesStatus, Open, OpenStatus, Repository, RepositoryOptions, Saver,
+         command_input::{CommandInput, CommandInputErrorKind},
+         credentials::{CredentialOptions, Credentials},
+     },
+diff -ruN -x target rustic_core.orig/src/repository.rs rustic_core/src/repository.rs
+--- rustic_core.orig/src/repository.rs	2026-11-25 22:10:51
++++ rustic_core/src/repository.rs	2026-11-25 22:10:51
+@@ -1911,3 +1911,116 @@
+         rewrite_snapshots_and_trees(self, snapshots, opts, tree_opts)
+     }
+ }
++
++// nl-engine patch: save file content and trees for a spliced snapshot.
++impl<S: IndexedTree> Repository<S> {
++    /// Returns a [`Saver`] that packs file content and trees, sharing one indexer.
++    ///
++    /// # Errors
++    ///
++    /// * If the packers could not be created.
++    pub fn saver(&self) -> RusticResult<Saver<'_, impl ReadGlobalIndex + '_>> {
++        use crate::archiver::file_archiver::FileArchiver;
++        use crate::blob::packer::{PackSizer, Packer};
++        use crate::index::indexer::Indexer;
++        let index = self.index();
++        let indexer = Indexer::new(self.dbe().clone()).into_shared();
++        let files = FileArchiver::new(self.dbe().clone(), index, indexer.clone(), self.config())?;
++        let pack_sizer =
++            PackSizer::from_config(self.config(), BlobType::Tree, index.total_size(BlobType::Tree));
++        let trees = Packer::new(self.dbe().clone(), BlobType::Tree, indexer.clone(), pack_sizer)?;
++        Ok(Saver {
++            index,
++            files,
++            trees,
++            indexer,
++            seen: std::sync::Mutex::new(std::collections::BTreeSet::new()),
++        })
++    }
++
++    /// Saves a snapshot file and returns its ID. Call this only after [`Saver::finalize`].
++    ///
++    /// # Errors
++    ///
++    /// * If the snapshot could not be written.
++    pub fn save_snapshot(&self, mut snap: SnapshotFile) -> RusticResult<SnapshotId> {
++        snap.id = SnapshotId::default();
++        Ok(self.dbe().save_file(&snap)?.into())
++    }
++}
++
++/// Packs file content and trees for a snapshot that is built outside the archiver.
++#[allow(missing_debug_implementations)]
++pub struct Saver<'a, I: ReadGlobalIndex> {
++    index: &'a I,
++    files: crate::archiver::file_archiver::FileArchiver<'a, DecryptBackend<Key>, I>,
++    trees: crate::blob::packer::Packer<DecryptBackend<Key>>,
++    indexer: crate::index::indexer::SharedIndexer<DecryptBackend<Key>>,
++    seen: std::sync::Mutex<std::collections::BTreeSet<TreeId>>,
++}
++
++impl<I: ReadGlobalIndex> Saver<'_, I> {
++    /// Chunks and packs the content read from `reader`, and returns `node` with that content and the
++    /// number of bytes read. This is what the archiver does for a new or changed file.
++    ///
++    /// # Errors
++    ///
++    /// * If reading or packing fails.
++    pub fn save_file(
++        &self,
++        reader: impl std::io::Read + Send + 'static,
++        node: Node,
++        p: &Progress,
++    ) -> RusticResult<(Node, u64)> {
++        self.files.backup_reader(reader, node, p)
++    }
++
++    /// Packs a tree unless the repository or this saver already has it, and returns its ID.
++    ///
++    /// # Errors
++    ///
++    /// * If the tree could not be serialized or packed.
++    pub fn save_tree(&self, tree: &Tree) -> RusticResult<TreeId> {
++        let (chunk, id) = tree.serialize().map_err(|err| {
++            RusticError::with_source(ErrorKind::Internal, "Failed to serialize tree.", err)
++        })?;
++        if !self.index.has_tree(&id) && self.seen.lock().unwrap().insert(id) {
++            self.trees.add(chunk.into(), BlobId::from(*id))?;
++        }
++        Ok(id)
++    }
++
++    /// Writes the last packs and the index, and adds the packer statistics to `summary`.
++    ///
++    /// # Errors
++    ///
++    /// * If a pack or the index could not be written.
++    pub fn finalize(self, summary: &mut SnapshotSummary) -> RusticResult<()> {
++        self.files.finalize()?.apply(summary, BlobType::Data);
++        self.trees.finalize()?.apply(summary, BlobType::Tree);
++        self.indexer.write().unwrap().finalize()?;
++        Ok(())
++    }
++}
++
++// nl-engine patch: encode and decode unpacked repository files, for restic lock files.
++impl<S: Open> Repository<S> {
++    /// Compresses (for repository version 2) and encrypts a repository file, as restic's
++    /// `SaveUnpacked` does. The file name is the SHA-256 of the result.
++    ///
++    /// # Errors
++    ///
++    /// * If compression or encryption fails.
++    pub fn encode_unpacked(&self, data: &[u8]) -> RusticResult<Vec<u8>> {
++        self.dbe().encrypt_file(data)
++    }
++
++    /// Decrypts and, if needed, decompresses a repository file.
++    ///
++    /// # Errors
++    ///
++    /// * If the file cannot be decrypted or decompressed.
++    pub fn decode_unpacked(&self, data: &[u8]) -> RusticResult<Vec<u8>> {
++        self.dbe().decrypt_file(data)
++    }
++}
