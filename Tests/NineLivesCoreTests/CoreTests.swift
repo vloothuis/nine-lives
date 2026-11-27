@@ -611,3 +611,14 @@ private final class BundleMarker {}
         #expect(t.port == 2201)
     }
 }
+
+@Test func remainingTimeFollowsTheSameKindOfBackup() {
+    let start = Date(timeIntervalSince1970: 1000)
+    var info = ProgressInfo()
+    info.kind = .quick
+    info.kindStarted = start
+    #expect(info.remaining(now: start.addingTimeInterval(10)) == nil)
+    info.expectedDuration = 300
+    #expect(info.remaining(now: start.addingTimeInterval(100)) == 200)
+    #expect(info.remaining(now: start.addingTimeInterval(400)) == nil)
+}

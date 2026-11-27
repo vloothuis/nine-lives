@@ -169,6 +169,9 @@ struct OverviewView: View {
                     Button("Stop") { c.cancelCurrent() }
                 }
                 if let f = info.fraction { ProgressView(value: f) } else { ProgressView().progressViewStyle(.linear) }
+                TimelineView(.periodic(from: .now, by: 30)) { t in
+                    Text(Fmt.backupStatus(info, now: t.date)).font(.callout)
+                }
                 Text("\(info.files.formatted()) files · \(Fmt.bytes(info.bytes)) checked" + (info.sentBytes > 0 ? " · \(Fmt.bytes(info.sentBytes)) sent" : ""))
                     .font(.callout).foregroundStyle(.secondary)
                 Text(info.currentPath).font(.caption).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
@@ -186,7 +189,7 @@ struct OverviewView: View {
                             ErrorBox(error: ShownError(m, details: last.details))
                         } else {
                             let groups = c.noteGroups(for: last)
-                            ForEach(groups.prefix(5)) { g in noteRow(g) }
+                            ForEach(groups.prefix(5)) { g in NoteRow(group: g, record: last) }
                             if groups.count > 5 {
                                 HStack(spacing: 4) {
                                     Text("And \(groups.count - 5) more.")
@@ -202,42 +205,5 @@ struct OverviewView: View {
                 }
             }
         }
-    }
-
-    @ViewBuilder private func noteRow(_ g: BackupNoteGroup) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            switch g.cause {
-            case .unreadable:
-                let folder = displayPath(g.folder ?? "")
-                let place = g.folders.count > 1 ? "\(g.folders.count) folders like \(folder)" : folder
-                Text(g.paths.count == 1 ? "1 item in \(place) could not be read."
-                                        : "\(g.paths.count) items in \(place) could not be read.")
-                    .font(.callout.weight(.medium))
-                Text("They belong to another user or only their owner may open them. This is often temporary data left by a tool. Skip the folder if you do not need it in your backup.")
-                    .font(.callout).foregroundStyle(.secondary)
-                if BackupNotes.canSkip(g) {
-                    if c.isSkipped(g) {
-                        Text("Skipped from the next backup on.").font(.callout).foregroundStyle(.secondary)
-                    } else {
-                        Button(g.folders.count > 1 ? "Skip all \(g.folders.count) folders" : "Skip \(folder)") { c.skip(g) }
-                            .help(g.folders.joined(separator: "\n"))
-                        if g.folders.count > 1, let e = g.extra {
-                            Text(e.folders == 0
-                                 ? "In the last backup, this skips these folders and nothing else."
-                                 : "In the last backup, this also skips \(e.folders == 1 ? "1 other folder" : "\(e.folders) other folders") with \(e.items == 1 ? "1 item" : "\(e.items.formatted()) items").")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            case .protected:
-                Text("macOS blocked access to \(g.paths.count == 1 ? "1 item" : "\(g.paths.count) items") in \(displayPath(g.folder ?? "")).")
-                    .font(.callout.weight(.medium))
-                Text("Give Nine Lives Full Disk Access to back these up.").font(.callout).foregroundStyle(.secondary)
-                Button("Open Full Disk Access Settings") { Permissions.openFullDiskAccessSettings() }
-            case .other:
-                ForEach(g.messages, id: \.self) { Text($0).font(.callout).textSelection(.enabled) }
-            }
-        }
-        .help(g.paths.joined(separator: "\n"))
     }
 }
