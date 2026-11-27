@@ -297,6 +297,10 @@ public struct KnownDisk: Codable, Identifiable, Equatable, Sendable {
     public var lastBackup: Date?
     public var lastBackupStats: ArchiveStats?
     public var lastBackupDuration: TimeInterval?
+    /// How long the last full backup took, which reads every folder.
+    public var lastFullBackupDuration: TimeInterval?
+    /// How long the last quick backup took, which reads only changed folders.
+    public var lastQuickBackupDuration: TimeInterval?
     public var lastVerification: VerificationSummary?
     /// Files picked during the last backup, so verification can test restores without listing the whole snapshot.
     public var lastBackupSample: BackupSample?
@@ -364,6 +368,8 @@ public struct BackupRecord: Codable, Identifiable, Equatable, Sendable {
     /// The snapshot whose folder index applies to this backup: its own, or after a quick backup the
     /// full backup it was built on.
     public var folderIndexSnapshot: String?
+    /// Whether Nine Lives had Full Disk Access during the backup. Nil for records written by older versions.
+    public var fullDiskAccess: Bool?
 
     public init(
         id: UUID = UUID(), diskID: String, diskName: String, start: Date, end: Date, outcome: Outcome,

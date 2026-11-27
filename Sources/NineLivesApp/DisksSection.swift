@@ -58,6 +58,8 @@ struct DisksSection: View {
                 }
                 Grid(alignment: .leading, horizontalSpacing: 20, verticalSpacing: 6) {
                     row("Last backup", disk.lastBackup.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? "Never")
+                    if let t = disk.lastFullBackupDuration { row("Full backup took", Fmt.duration(t)) }
+                    if let t = disk.lastQuickBackupDuration { row("Quick backup took", Fmt.duration(t)) }
                     if let s = disk.storedSize { row("Backups use", Fmt.bytes(s)) }
                     if let v = volume ?? nil { row("Free space", Fmt.bytes(v.availableCapacity)) }
                     if let s = disk.remote { row("Server", "\(s.display), \(s.path)") }

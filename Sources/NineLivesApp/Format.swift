@@ -21,6 +21,28 @@ enum Fmt {
         return "\(s / 3600) h \((s % 3600) / 60) min"
     }
 
+    /// Time left, rounded up and kept rough: whole minutes below 5 minutes, then 5 minutes, then 15 minutes.
+    static func timeLeft(_ t: TimeInterval) -> String {
+        let m = Int((t / 60).rounded(.up))
+        if m <= 1 { return "About a minute left" }
+        if m < 5 { return "About \(m) min left" }
+        if m < 60 { return "About \((m + 4) / 5 * 5) min left" }
+        let q = (m + 14) / 15 * 15
+        return q % 60 == 0 ? "About \(q / 60) h left" : "About \(q / 60) h \(q % 60) min left"
+    }
+
+    /// The backup's kind and rough time left, for progress views.
+    static func backupStatus(_ info: ProgressInfo, now: Date = Date()) -> String {
+        let kind = switch info.kind {
+        case .quick: "Quick backup, only changed folders"
+        case .full: "Full backup, every folder"
+        case nil: "Deciding between a quick and a full backup"
+        }
+        guard info.kind != nil, info.expectedDuration != nil else { return kind }
+        if let left = info.remaining(now: now) { return "\(kind) · \(timeLeft(left))" }
+        return "\(kind) · Taking longer than last time"
+    }
+
     static func summary(_ stats: ArchiveStatsLike?) -> String {
         guard let stats else { return "" }
         return "\(stats.files.formatted()) files, \(bytes(stats.newBytes)) new"

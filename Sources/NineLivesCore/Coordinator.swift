@@ -1,4 +1,5 @@
 import Foundation
+import os
 import AppKit
 import Network
 import ResticKit
@@ -13,6 +14,19 @@ public struct ProgressInfo: Equatable, Sendable {
     public var started = Date()
     /// The backup runs in macOS background mode, so it yields to what the user is doing.
     public var lowPriority = false
+    /// Quick or full, once the engine has chosen.
+    public var kind: BackupRecord.Kind?
+    /// When the chosen kind of backup began. A failed quick backup is followed by a full one.
+    public var kindStarted = Date()
+    /// How long the last backup of the same kind took to this disk, nil when unknown.
+    public var expectedDuration: TimeInterval?
+
+    /// Rough time left, nil when there is no previous backup of this kind or it already took longer.
+    public func remaining(now: Date = Date()) -> TimeInterval? {
+        guard let expectedDuration else { return nil }
+        let left = expectedDuration - now.timeIntervalSince(kindStarted)
+        return left > 0 ? left : nil
+    }
 }
 
 public enum Activity: Equatable, Sendable {
@@ -67,7 +81,8 @@ public final class BackupCoordinator {
     @ObservationIgnored private var probing = false
     /// Notes grouped with the folder index of the same backup. Setting one refreshes the notes.
     private var indexedNotes: [UUID: [BackupNoteGroup]] = [:]
-    @ObservationIgnored private var noteCache: (id: UUID, groups: [BackupNoteGroup])?
+    /// Notes grouped without an index, for the few backups shown at once.
+    @ObservationIgnored private var noteCache: [UUID: [BackupNoteGroup]] = [:]
     @ObservationIgnored private var indexing: Set<UUID> = []
     public var sshKeys: SSHKeyStore { SSHKeyStore(directory: store.sshDirectory) }
 
@@ -99,9 +114,10 @@ public final class BackupCoordinator {
     /// The index is read in the background and not kept in memory; until it is read, notes are grouped without it.
     public func noteGroups(for r: BackupRecord) -> [BackupNoteGroup] {
         if let g = indexedNotes[r.id] { return g }
-        if let c = noteCache, c.id == r.id { return c.groups }
+        if let g = noteCache[r.id] { return g }
         let groups = BackupNotes.group(r.messages)
-        noteCache = (r.id, groups)
+        if noteCache.count >= 4 { noteCache.removeAll() }
+        noteCache[r.id] = groups
         if groups.contains(where: { $0.cause != .other }), let name = r.folderIndexSnapshot ?? r.archiveName, !indexing.contains(r.id) {
             indexing.insert(r.id)
             let url = store.folderIndexURL, messages = r.messages, id = r.id
@@ -431,16 +447,31 @@ public final class BackupCoordinator {
         sleepActivity = nil
     }
 
-    /// The bar follows elapsed time against the previous run's duration. It turns indeterminate when there is no
-    /// previous run or this run takes longer.
-    private func updateProgress(_ p: CreateProgress, start: Date, previousDuration: TimeInterval?) {
+    /// Records the kind of backup the engine chose and how long the last one of that kind took.
+    private func backupStarting(_ kind: BackupRecord.Kind) {
+        guard case .backingUp(let id, var info) = activity else { return }
+        let disk = self.disk(id)
+        info.kind = kind
+        info.kindStarted = Date()
+        info.fraction = nil
+        let stored = kind == .full ? disk?.lastFullBackupDuration : disk?.lastQuickBackupDuration
+        // Before durations were stored per kind, the history is the only record of them.
+        info.expectedDuration = stored ?? state.history.first {
+            $0.diskID == id && $0.kind == kind && ($0.outcome == .success || $0.outcome == .warning)
+        }.map { $0.end.timeIntervalSince($0.start) }
+        activity = .backingUp(diskID: id, info)
+    }
+
+    /// The bar follows elapsed time against the last backup of the same kind. It turns indeterminate when there
+    /// is no such backup or this one takes longer.
+    private func updateProgress(_ p: CreateProgress) {
         guard case .backingUp(let id, var info) = activity else { return }
         info.files = p.fileCount
         info.bytes = p.originalSize
         info.sentBytes = p.deduplicatedSize
         info.currentPath = p.currentPath
-        if let usual = previousDuration, usual > 0 {
-            let f = Date().timeIntervalSince(start) / usual
+        if let usual = info.expectedDuration, usual > 0 {
+            let f = Date().timeIntervalSince(info.kindStarted) / usual
             info.fraction = f < 0.99 ? f : nil
         } else {
             info.fraction = nil
@@ -450,10 +481,10 @@ public final class BackupCoordinator {
 
     private func performBackup(engine: BackupEngine, disk: KnownDisk, volume: VolumeInfo?, trigger: BackupTrigger) async {
         let start = Date()
-        let previousDuration = disk.lastBackupDuration
         beginKeepAwake("Backing up to \(disk.name)")
         defer { endKeepAwake() }
         var record = BackupRecord(diskID: disk.id, diskName: disk.name, start: start, end: start, outcome: .success, trigger: trigger)
+        record.fullDiskAccess = BackupEngine.fullDiskAccess()
         var createdFolders: FolderCollector?
         var snapshotID = ""
         var ejected = false
@@ -471,8 +502,10 @@ public final class BackupCoordinator {
                     notifier.post(title: "Old backups removed", body: w, id: "migrate-\(disk.id)", sound: true)
                 }
             }
-            let result = try await engine.runBackup(disk: disk, on: volume, settings: state.settings) { [weak self] p in
-                Task { @MainActor in self?.updateProgress(p, start: start, previousDuration: previousDuration) }
+            let result = try await engine.runBackup(disk: disk, on: volume, settings: state.settings, starting: { [weak self] k in
+                Task { @MainActor in self?.backupStarting(k) }
+            }) { [weak self] p in
+                Task { @MainActor in self?.updateProgress(p) }
             }
             let end = Date()
             record.end = end
@@ -483,6 +516,8 @@ public final class BackupCoordinator {
             record.messages = (migrationWarning.map { [$0] } ?? []) + result.create.warnings + result.maintenanceWarnings
             record.outcome = record.messages.isEmpty ? .success : .warning
             createdFolders = result.create.folders
+            let seconds = Int(end.timeIntervalSince(start))
+            backupLog.info("\(result.kind.rawValue, privacy: .public) backup to \(disk.name, privacy: .private) took \(seconds) s")
             snapshotID = result.create.archiveID
             updateDisk(disk.id) {
                 $0.repoFolder = result.disk.repoFolder
@@ -493,6 +528,10 @@ public final class BackupCoordinator {
                 $0.lastBackupSample = result.create.sample.isEmpty
                     ? nil : BackupSample(snapshotID: result.create.archiveID, files: result.create.sample)
                 $0.lastBackupDuration = end.timeIntervalSince(start)
+                switch result.kind {
+                case .full: $0.lastFullBackupDuration = end.timeIntervalSince(start)
+                case .quick: $0.lastQuickBackupDuration = end.timeIntervalSince(start)
+                }
                 $0.storedSize = result.storedSize ?? $0.storedSize
                 $0.repositoryID = $0.repositoryID ?? result.repositoryID
                 $0.lastFailure = nil

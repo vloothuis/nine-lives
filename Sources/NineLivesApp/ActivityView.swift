@@ -98,7 +98,17 @@ private struct RecordRow: View {
 }
 
 private struct RecordDetail: View {
+    @Environment(BackupCoordinator.self) private var c
     let record: BackupRecord
+
+    private var messageList: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Array(record.messages.enumerated()), id: \.offset) { _, m in
+                Text(m).font(.callout).textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
 
     var body: some View {
         ScrollView {
@@ -119,12 +129,32 @@ private struct RecordDetail: View {
                 .font(.callout)
 
                 if !record.messages.isEmpty {
-                    section(record.outcome == .failed ? "What went wrong" : "Notes", copy: record.messages.joined(separator: "\n")) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            ForEach(Array(record.messages.enumerated()), id: \.offset) { _, m in
-                                Text(m).font(.callout).textSelection(.enabled)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
+                    if record.outcome == .failed {
+                        section("What went wrong", copy: record.messages.joined(separator: "\n")) { messageList }
+                    } else {
+                        let groups = c.noteGroups(for: record)
+                        if !groups.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Notes").font(.headline)
+                                VStack(alignment: .leading, spacing: 12) {
+                                    ForEach(groups) { g in NoteRow(group: g, record: record) }
+                                }
+                                .padding(10)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
                             }
+                        } else {
+                            Text("Some files changed or disappeared while the backup ran. This is normal.").font(.callout)
+                        }
+                        DisclosureGroup("All messages (\(record.messages.count))") {
+                            HStack {
+                                Spacer()
+                                Button("Copy") { copyToPasteboard(record.messages.joined(separator: "\n")) }
+                                    .buttonStyle(.link).font(.callout)
+                            }
+                            messageList
+                                .padding(10)
+                                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
                         }
                     }
                 }

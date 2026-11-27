@@ -491,6 +491,7 @@ public final class BackupEngine: Sendable {
         disk: KnownDisk,
         on volume: VolumeInfo?,
         settings: BackupSettings,
+        starting: @escaping @Sendable (BackupRecord.Kind) -> Void = { _ in },
         progress: @escaping @Sendable (CreateProgress) -> Void
     ) async throws -> BackupRunResult {
         if let volume {
@@ -512,8 +513,9 @@ public final class BackupEngine: Sendable {
             excludeIfPresent: [".nobackup"] + settings.excludeMarkers, host: Machine.backupHost, tag: Self.tag)
         let made: MadeBackup
         if let engine, !settings.useResticBackup {
-            made = try await engineBackup(engine, disk: disk, repo: repo, options: options, progress: progress)
+            made = try await engineBackup(engine, disk: disk, repo: repo, options: options, starting: starting, progress: progress)
         } else {
+            starting(.full)
             let created = try await recovering(repo) {
                 try await restic.backup(repo: repo, options: options, progress: progress)
             }
@@ -561,6 +563,7 @@ public final class BackupEngine: Sendable {
     /// otherwise a full sweep. A failed splice is followed by a sweep in the same run.
     private func engineBackup(
         _ engine: Engine, disk: KnownDisk, repo: ResticRepo, options: CreateOptions,
+        starting: @escaping @Sendable (BackupRecord.Kind) -> Void,
         progress: @escaping @Sendable (CreateProgress) -> Void
     ) async throws -> MadeBackup {
         // Taken before anything is read, so changes made during the backup are seen next time.
@@ -583,6 +586,7 @@ public final class BackupEngine: Sendable {
         var notes: [String] = []
 
         if case .incremental(let changes) = decision, let state {
+            starting(.quick)
             do {
                 let r = try await recovering(repo) {
                     try await engine.backup(repo: repo, options: options, run: .splice(parent: state.snapshotID, changes: changes), progress: progress)
@@ -611,6 +615,7 @@ public final class BackupEngine: Sendable {
         // The newest snapshot is the parent, also when it was made by restic: files whose size and
         // modification time match are not read again.
         let parent = facts.newestSnapshotID
+        starting(.full)
         let r = try await recovering(repo) {
             try await engine.backup(repo: repo, options: options, run: .sweep(parent: parent, force: force), progress: progress)
         }
