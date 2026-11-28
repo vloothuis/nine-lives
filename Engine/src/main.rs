@@ -8,6 +8,7 @@
 mod filter;
 mod lock;
 mod output;
+mod retry;
 mod sample;
 mod sftp;
 mod splice;
@@ -198,6 +199,7 @@ fn summary(out: &Out, repo: &Repo, kind: &str, snap: &SnapshotFile, hard_links_c
 
 fn run(args: Args) -> Result<()> {
     install_signal_handler()?;
+    retry::raise_open_file_limit();
     let out = Out::new(args.command == "backup");
     let filter = Arc::new(build_filter(&args)?);
     let sources = walk::normalize_sources(&args.sources)?;

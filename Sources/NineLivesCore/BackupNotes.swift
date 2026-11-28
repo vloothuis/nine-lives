@@ -7,6 +7,8 @@ public struct BackupNoteGroup: Identifiable, Equatable, Sendable {
         case unreadable
         /// macOS privacy protection blocked access. Full Disk Access helps.
         case protected
+        /// The Mac was busy: a system call was interrupted or no file handles were free. A later backup tries again.
+        case busy
         /// Anything Nine Lives cannot classify.
         case other
     }
@@ -53,8 +55,12 @@ public enum BackupNotes {
             if lower.hasSuffix("no such file or directory") { continue }
             let cause: BackupNoteGroup.Cause =
                 lower.hasSuffix("operation not permitted") ? .protected :
-                lower.hasSuffix("permission denied") ? .unreadable : .other
-            let path = cause == .other ? nil : path(in: m)
+                lower.hasSuffix("permission denied") ? .unreadable :
+                busySuffixes.contains(where: lower.hasSuffix) ? .busy : .other
+            // Notes also hold free text, such as maintenance warnings. Only the form an item error
+            // has is read as a path, so a sentence never becomes a folder to skip.
+            let path = cause == .unreadable || cause == .protected ? path(in: m)
+                     : itemErrorPrefixes.contains(where: m.hasPrefix) ? path(in: m) : nil
             let folder = path.map { ($0 as NSString).deletingLastPathComponent }
             if let folder, let i = groups.firstIndex(where: { $0.cause == cause && $0.folder == folder }) {
                 if let path, !groups[i].paths.contains(path) { groups[i].paths.append(path) }
@@ -71,6 +77,10 @@ public enum BackupNotes {
         return merge(groups, index: index, home: home)
     }
 
+    static let busySuffixes = ["interrupted system call", "too many open files in system", "too many open files"]
+    /// How item errors start: nl-engine's `read /path: ...` and restic's `open /path: ...` or `lstat /path: ...`.
+    static let itemErrorPrefixes = ["read /", "open /", "lstat /"]
+
     /// Merges pairs of groups as long as some pair has an acceptable common pattern.
     static func merge(_ input: [BackupNoteGroup], index: FolderIndex?, home: String) -> [BackupNoteGroup] {
         var groups = input
@@ -81,7 +91,8 @@ public enum BackupNotes {
             merged = false
             outer: for i in groups.indices {
                 for j in groups.indices where j > i {
-                    guard groups[i].cause == groups[j].cause, groups[i].cause != .other else { continue }
+                    // Only lasting causes are merged. A busy or unknown error says little about its siblings.
+                    guard groups[i].cause == groups[j].cause, groups[i].cause == .unreadable || groups[i].cause == .protected else { continue }
                     let folders = groups[i].folders + groups[j].folders.filter { !groups[i].folders.contains($0) }
                     guard let c = generalize(folders, lastMayDiffer: index != nil),
                           canSkip(prefixOf: c.display, home: home) else { continue }

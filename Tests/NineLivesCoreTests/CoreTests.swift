@@ -453,6 +453,25 @@ func fakeVolume(at url: URL, encrypted: Bool) -> VolumeInfo {
         #expect(groups[2].cause == .other)
     }
 
+    @Test func busyAndOtherItemErrorsCanBeSkipped() {
+        let groups = BackupNotes.group([
+            "read /Users/a/Library/Containers/com.x/Data: interrupted system call",
+            "read /Users/a/Library/Containers/com.y/Data: interrupted system call",
+            "read /Users/a/w/build/ModuleCache.noindex/D5Y: too many open files in system",
+            "read /Users/a/odd/thing: not a folder",
+            "The backup disk at /Volumes/Backup: needs maintenance",
+        ], home: "/Users/a")
+        #expect(groups.map(\.cause) == [.busy, .busy, .busy, .other, .other])
+        // Busy errors are not merged into a pattern.
+        #expect(groups[0].folder == "/Users/a/Library/Containers/com.x")
+        #expect(groups[2].folder == "/Users/a/w/build/ModuleCache.noindex")
+        #expect(groups[3].folder == "/Users/a/odd")
+        #expect(BackupNotes.canSkip(groups[3], home: "/Users/a"))
+        // Free text is never read as a path.
+        #expect(groups[4].folder == nil)
+        #expect(!BackupNotes.canSkip(groups[4], home: "/Users/a"))
+    }
+
     @Test func withoutIndexMergesFoldersThatDifferInOneName() {
         let groups = BackupNotes.group([
             "open /Users/a/FP/AB-1/wharf/tombstone/x: permission denied",

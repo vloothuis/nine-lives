@@ -112,6 +112,13 @@ extension DefaultRules {
     private static let apple = group("Swift and Xcode", "Created again by Xcode or Swift Package Manager.", [
         ("Swift Package Manager build folder", .anywhere, ".build"),
         ("Xcode build data anywhere", .anywhere, "DerivedData"),
+        // Xcode's own cache folders, also found in a custom -derivedDataPath. Not every `.noindex`
+        // folder: Signal Desktop keeps attachments and drafts in `attachments.noindex` and `drafts.noindex`.
+        ("Xcode module caches", .anywhere, "ModuleCache.noindex"),
+        ("Xcode compilation caches", .anywhere, "CompilationCache.noindex"),
+        ("Xcode SDK caches", .anywhere, "SDKStatCaches.noindex"),
+        ("Xcode build intermediates", .anywhere, "Intermediates.noindex"),
+        ("Xcode code index", .anywhere, "Index.noindex"),
         ("iOS device debug symbols", .home, "Library/Developer/Xcode/iOS DeviceSupport"),
         ("watchOS device debug symbols", .home, "Library/Developer/Xcode/watchOS DeviceSupport"),
         ("tvOS device debug symbols", .home, "Library/Developer/Xcode/tvOS DeviceSupport"),

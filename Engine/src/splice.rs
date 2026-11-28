@@ -212,8 +212,9 @@ pub fn run(repo: &Repo, walker: &Walker, parent_id: &str, changes: &Path) -> Res
     let recursive = |p: &Path| recursive_roots.iter().any(|r| p.starts_with(r));
 
     // 2. Changed folders that are now excluded or unreadable are removed. Nothing below them is
-    //    rebuilt.
+    //    rebuilt. A folder that fails only because the Mac is busy keeps its parent's tree.
     let mut removed: BTreeSet<PathBuf> = BTreeSet::new();
+    let mut kept: BTreeSet<PathBuf> = BTreeSet::new();
     let mut listed: HashMap<PathBuf, Vec<crate::walk::Entry>> = HashMap::new();
     for d in &changed {
         if removed.iter().any(|r| d.starts_with(r)) {
@@ -225,6 +226,10 @@ pub fn run(repo: &Repo, walker: &Walker, parent_id: &str, changes: &Path) -> Res
         }
         match walker.list(d) {
             Ok(e) => _ = listed.insert(d.clone(), e),
+            Err(e) if crate::retry::is_busy(&e) && !roots.contains(d) => {
+                out.error(d, e);
+                _ = kept.insert(d.clone());
+            }
             Err(e) if roots.contains(d) => bail!("cannot read source {}: {e}", d.display()),
             Err(e) => {
                 out.error(d, e);
@@ -232,8 +237,11 @@ pub fn run(repo: &Repo, walker: &Walker, parent_id: &str, changes: &Path) -> Res
             }
         }
     }
-    let rebuild: BTreeSet<PathBuf> =
-        changed.iter().filter(|d| !removed.iter().any(|r| d.starts_with(r))).cloned().collect();
+    let rebuild: BTreeSet<PathBuf> = changed
+        .iter()
+        .filter(|d| !kept.contains(*d) && !removed.iter().any(|r| d.starts_with(r)))
+        .cloned()
+        .collect();
     // Folders above a rebuilt or removed folder that are not rebuilt themselves. They get the
     // parent's tree with some entries replaced or removed.
     let mut above: BTreeSet<PathBuf> = BTreeSet::new();
@@ -303,6 +311,12 @@ pub fn run(repo: &Repo, walker: &Walker, parent_id: &str, changes: &Path) -> Res
                         Ok(children) => {
                             work.push((path.clone(), children, prev_dir.is_some()));
                             items.push(Item::Dir(path, node));
+                        }
+                        Err(e) if crate::retry::is_busy(&e) && prev_dir.as_ref().is_some_and(|p| p.subtree.is_some()) => {
+                            // The Mac is busy: keep the folder as it was in the parent.
+                            out.error(&path, e);
+                            node.subtree = prev_dir.as_ref().and_then(|p| p.subtree);
+                            items.push(Item::Ready(node));
                         }
                         Err(e) => {
                             out.error(&path, e);

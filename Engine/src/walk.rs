@@ -124,28 +124,35 @@ impl Walker {
         if self.roots.iter().any(|(r, _)| r == path) {
             return false;
         }
-        let Ok(m) = std::fs::symlink_metadata(path) else { return true };
+        let m = match crate::retry::io(|| std::fs::symlink_metadata(path)) {
+            Ok(m) => m,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return true,
+            // Not excluded, so the listing that follows reports the error.
+            Err(_) => return false,
+        };
         let markers = self.markers_in(dir);
         !self.keep(&markers, &name.to_os_string(), path, &m)
     }
 
     /// Lists one folder: its entries in byte order, with excluded ones left out.
     /// Fails when the folder cannot be read. Unreadable entries are reported and left out.
+    /// A busy error is retried by reading the folder again from the start.
     pub fn list(&self, dir: &Path) -> std::io::Result<Vec<Entry>> {
         if self.filter.one_file_system
             && let Some(dev) = self.root_device(dir)
-            && std::fs::symlink_metadata(dir)?.dev() != dev
+            && crate::retry::io(|| std::fs::symlink_metadata(dir))?.dev() != dev
         {
             return Ok(Vec::new());
         }
-        let mut names: Vec<OsString> =
-            std::fs::read_dir(dir)?.map(|e| e.map(|e| e.file_name())).collect::<Result<_, _>>()?;
+        let mut names: Vec<OsString> = crate::retry::io(|| {
+            std::fs::read_dir(dir)?.map(|e| e.map(|e| e.file_name())).collect::<Result<_, _>>()
+        })?;
         names.sort();
         let markers = self.markers_in(dir);
         let mut entries = Vec::with_capacity(names.len());
         for name in names {
             let path = dir.join(&name);
-            let m = match std::fs::symlink_metadata(&path) {
+            let m = match crate::retry::io(|| std::fs::symlink_metadata(&path)) {
                 Ok(m) => m,
                 Err(e) => {
                     // Gone since the listing: not an error, as in restic.
@@ -168,7 +175,7 @@ impl Walker {
 
     /// The node of a folder itself, with the same metadata a listing of its parent gives.
     pub fn own_node(&self, dir: &Path) -> std::io::Result<Node> {
-        let m = std::fs::symlink_metadata(dir)?;
+        let m = crate::retry::io(|| std::fs::symlink_metadata(dir))?;
         self.save_opts.map_path(dir.to_path_buf(), &m).map(|e| e.node).map_err(std::io::Error::other)
     }
 }

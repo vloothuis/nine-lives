@@ -33,8 +33,16 @@ struct NoteRow: View {
                     Text("Give Nine Lives Full Disk Access to back these up.").font(.callout).foregroundStyle(.secondary)
                     Button("Open Full Disk Access Settings") { Permissions.openFullDiskAccessSettings() }
                 }
+            case .busy:
+                Text(g.paths.count == 1 ? "1 item in \(place) could not be read because the Mac was busy."
+                                        : "\(g.paths.count) items in \(place) could not be read because the Mac was busy.")
+                    .font(.callout.weight(.medium))
+                Text("Another program was using many files, or macOS interrupted the read. A later backup tries again, and a quick backup keeps the copy from the last backup. Skip the folder only if you do not need it in your backup.")
+                    .font(.callout).foregroundStyle(.secondary)
+                skipControls
             case .other:
                 ForEach(g.messages, id: \.self) { Text($0).font(.callout).textSelection(.enabled) }
+                if g.folder != nil { skipControls }
             }
         }
         .help(g.paths.joined(separator: "\n"))
