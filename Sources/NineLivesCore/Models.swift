@@ -13,6 +13,8 @@ public struct ExcludeRule: Codable, Identifiable, Equatable, Sendable {
         case absolute
         /// A file name. Any folder that contains this file is skipped.
         case marker
+        /// A folder name. The folder is skipped when the Git repository that holds it ignores it.
+        case gitignored
     }
 
     public var id: String
@@ -62,7 +64,7 @@ public struct ExcludeRule: Codable, Identifiable, Equatable, Sendable {
         case .home: return "\(home)/\(value)"
         case .anywhere: return value
         case .absolute: return value
-        case .marker: return nil
+        case .marker, .gitignored: return nil
         }
     }
 }
@@ -212,6 +214,11 @@ public struct BackupSettings: Codable, Equatable, Sendable {
             out.append(ch)
         }
         return out
+    }
+
+    /// Folder names that are skipped where Git ignores them.
+    public var excludeGitignored: [String] {
+        rules.filter { $0.enabled && $0.kind == .gitignored }.map(\.value)
     }
 
     /// File names that make restic skip the folder that holds them.

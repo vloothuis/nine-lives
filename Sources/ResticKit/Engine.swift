@@ -99,6 +99,7 @@ public final class Engine: Sendable {
         if options.excludeCaches { a.append("--exclude-caches") }
         if options.oneFileSystem { a.append("--one-file-system") }
         for m in options.excludeIfPresent { a += ["--exclude-if-present", m] }
+        for n in options.excludeGitignored { a += ["--exclude-gitignored", n] }
         for p in options.excludePatterns { a += ["--exclude", p] }
         for p in options.includePatterns { a += ["--exclude", "!" + p] }
         return a + ["--"] + options.sources

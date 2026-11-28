@@ -6,6 +6,7 @@
 //! See docs/design/backup-engine.md for the design, the protocol and the threat model.
 
 mod filter;
+mod gitignored;
 mod lock;
 mod output;
 mod retry;
@@ -32,6 +33,7 @@ use serde_json::json;
 
 use crate::{
     filter::{CACHEDIR_TAG, Marker, PatternList},
+    gitignored::GitIgnored,
     lock::{Codec, Lock, Locked, State},
     output::{Bars, Out},
     store::{Guarded, LocalStore, Store},
@@ -59,6 +61,7 @@ struct Args {
     changed: Option<PathBuf>,
     excludes: Vec<String>,
     markers: Vec<String>,
+    gitignored: Vec<String>,
     one_file_system: bool,
     sources: Vec<PathBuf>,
 }
@@ -82,6 +85,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args> {
             "--changed" => a.changed = Some(PathBuf::from(val()?)),
             "--exclude" => a.excludes.push(val()?),
             "--exclude-if-present" => a.markers.push(val()?),
+            "--exclude-gitignored" => a.gitignored.push(val()?),
             "--exclude-caches" => a.markers.push(CACHEDIR_TAG.into()),
             "--one-file-system" => a.one_file_system = true,
             "--" => a.sources.extend(it.by_ref().map(PathBuf::from)),
@@ -172,7 +176,8 @@ fn open(args: &Args, out: &Arc<Out>, state: &Arc<State>) -> Result<(Arc<Repo>, A
 fn build_filter(args: &Args) -> Result<Filter> {
     PatternList::validate(&args.excludes).map_err(|e| anyhow!(e))?;
     let markers = args.markers.iter().map(|m| Marker::parse(m)).collect::<Result<Vec<_>, _>>().map_err(|e| anyhow!(e))?;
-    Ok(Filter { patterns: PatternList::new(&args.excludes), markers, one_file_system: args.one_file_system })
+    let gitignored = Arc::new(GitIgnored::new(args.gitignored.clone()).map_err(|e| anyhow!(e))?);
+    Ok(Filter { patterns: PatternList::new(&args.excludes), markers, gitignored, one_file_system: args.one_file_system })
 }
 
 fn summary(out: &Out, repo: &Repo, kind: &str, snap: &SnapshotFile, hard_links_changed: bool) -> Result<()> {

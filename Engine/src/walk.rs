@@ -18,6 +18,7 @@ use rustic_core::{
 
 use crate::{
     filter::{Marker, PatternList},
+    gitignored::GitIgnored,
     output::Out,
 };
 
@@ -25,6 +26,7 @@ use crate::{
 pub struct Filter {
     pub patterns: PatternList,
     pub markers: Vec<Marker>,
+    pub gitignored: Arc<GitIgnored>,
     pub one_file_system: bool,
 }
 
@@ -106,6 +108,14 @@ impl Walker {
             return false;
         }
         if self.filter.patterns.excludes(path) {
+            return false;
+        }
+        if m.is_dir()
+            && !self.filter.gitignored.is_empty()
+            && let Some(dir) = path.parent()
+            && self.filter.gitignored.excludes(dir, path)
+            && !self.filter.patterns.keeps(path)
+        {
             return false;
         }
         if self.filter.one_file_system

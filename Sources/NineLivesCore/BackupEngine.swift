@@ -515,7 +515,8 @@ public final class BackupEngine: Sendable {
 
         let options = CreateOptions(
             sources: sources, excludePatterns: settings.excludePatterns(), includePatterns: settings.includePatterns,
-            excludeIfPresent: [".nobackup"] + settings.excludeMarkers, host: Machine.backupHost, tag: Self.tag)
+            excludeIfPresent: [".nobackup"] + settings.excludeMarkers,
+            excludeGitignored: settings.excludeGitignored, host: Machine.backupHost, tag: Self.tag)
         let made: MadeBackup
         if let engine, !settings.useResticBackup {
             made = try await engineBackup(engine, disk: disk, repo: repo, options: options, starting: starting, progress: progress)

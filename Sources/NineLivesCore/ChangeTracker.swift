@@ -136,6 +136,8 @@ public enum ChangeTracker {
     public static func configHash(_ o: CreateOptions) -> String {
         var parts = ["v1"] + o.sources.sorted()
         parts += ["--"] + o.excludePatterns + ["--"] + o.includePatterns + ["--"] + o.excludeIfPresent
+        // Left out when empty, so hashes from before this option stay the same.
+        if !o.excludeGitignored.isEmpty { parts += ["--gitignored"] + o.excludeGitignored }
         parts += [o.excludeCaches ? "caches" : "", o.oneFileSystem ? "onefs" : "", o.host ?? "", o.tag]
         let data = Data(parts.joined(separator: "\u{1f}").utf8)
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()

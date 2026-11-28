@@ -211,6 +211,12 @@ impl PatternList {
         self.list(&path_str(path), false).map(|r| r.0).unwrap_or(false)
     }
 
+    /// True when a negated pattern, a path the user chose to keep, matches this path.
+    pub fn keeps(&self, path: &Path) -> bool {
+        let strs = split(&path_str(path));
+        self.patterns.iter().any(|p| p.negated && matches(&p.parts, &strs).unwrap_or(false))
+    }
+
     /// `ListWithChild`. restic's backup does not use it; it is kept for the tests.
     #[cfg(test)]
     fn list_with_child(&self, path: &Path) -> Result<(bool, bool), BadPattern> {
@@ -633,6 +639,10 @@ mod tests {
 
     #[test]
     fn child_match() {
+        let l = PatternList::new(&["node_modules", "!/Users/a/p/vendor"]);
+        assert!(l.keeps(Path::new("/Users/a/p/vendor")));
+        assert!(!l.keeps(Path::new("/Users/a/q/vendor")));
+        assert!(!l.keeps(Path::new("/Users/a/q/node_modules")), "only negated patterns keep");
         let l = PatternList::new(&["/foo/bar/*.go"]);
         assert_eq!(l.list_with_child(Path::new("/foo")).unwrap(), (false, true));
         assert_eq!(l.list_with_child(Path::new("/baz")).unwrap(), (false, false));

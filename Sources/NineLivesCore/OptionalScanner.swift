@@ -45,7 +45,7 @@ public enum OptionalScanner {
             case .home, .absolute:
                 let path = rule.kind == .home ? "\(home)/\(rule.value)" : rule.value
                 if inSources(path), fm.fileExists(atPath: path) { found[rule.id, default: []].append(path) }
-            case .anywhere, .marker:
+            case .anywhere, .marker, .gitignored:
                 break
             }
         }
