@@ -29,6 +29,25 @@ public struct ResticError: LocalizedError, Sendable {
                          "nodename nor servname", "unable to start the sftp session"])
     }
 
+    /// The server changed its host key. This can be an attack, so it is never treated as a passing network problem.
+    public var isHostKeyProblem: Bool {
+        mentions(["host key verification failed", "remote host identification has changed"])
+    }
+
+    /// The network failed or the connection dropped, which is normal for a server the Mac is not always near.
+    /// False when the user must act: a rejected key, a changed host key or a server without SFTP.
+    public var isConnectionLost: Bool {
+        if isAuthenticationFailure || isHostKeyProblem || isSFTPMissing { return false }
+        // The server closed the connection before the handshake, usually because it limits or banned this Mac.
+        if mentions(["kex_exchange_identification"]) { return false }
+        return isConnectionProblem || mentions([
+            "connection lost", "client_loop", "closed by remote host", "not responding", "unexpected eof",
+            // nl-engine's SFTP client
+            "the sftp connection ended", "the sftp server closed its input", "the sftp server did not answer within",
+            "the sftp server did not accept data within",
+        ])
+    }
+
     /// ssh worked but the server does not offer SFTP.
     public var isSFTPMissing: Bool { mentions(["subsystem request failed"]) }
 

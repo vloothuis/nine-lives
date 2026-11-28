@@ -673,3 +673,82 @@ private final class BundleMarker {}
     #expect(info.remaining(now: start.addingTimeInterval(100)) == 200)
     #expect(info.remaining(now: start.addingTimeInterval(400)) == nil)
 }
+
+@Suite struct SkippedRunTests {
+    @Test func droppedConnectionsAreLost() {
+        // Output from a check whose connection dropped.
+        let dropped = ResticError(exitCode: 1, rawMessages: [
+            "Fatal: config cannot be loaded: ssh command exited: exit status 255",
+            "subprocess /usr/bin/ssh: client_loop: ssh_packet_write_poll: Connection to 10.0.1.3 port 22: Broken pipe",
+            "Load(<config/0000000000>, 0, 0) returned error, retrying after 938.308727ms: Open /backups/x/config: connection lost",
+        ])
+        #expect(dropped.isConnectionLost)
+        #expect(ResticError(exitCode: 1, rawMessages: ["Timeout, server pi not responding."]).isConnectionLost)
+        #expect(ResticError(exitCode: 1, rawMessages: ["Connection to pi closed by remote host."]).isConnectionLost)
+        #expect(ResticError(exitCode: 1, messages: ["the SFTP connection ended: ssh: Broken pipe"]).isConnectionLost)
+        #expect(ResticError(exitCode: 1, messages: ["the SFTP server did not answer within 60 seconds"]).isConnectionLost)
+    }
+
+    @Test func faultsThatNeedTheUserAreNotLost() {
+        #expect(!ResticError(exitCode: 1, rawMessages: ["me@h: Permission denied (publickey)."]).isConnectionLost)
+        #expect(!ResticError(exitCode: 1, rawMessages: ["Host key verification failed."]).isConnectionLost)
+        #expect(!ResticError(exitCode: 1, rawMessages: ["@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @"]).isConnectionLost)
+        #expect(!ResticError(exitCode: 1, rawMessages: ["subsystem request failed on channel 0"]).isConnectionLost)
+        #expect(!ResticError(exitCode: 1, rawMessages: ["kex_exchange_identification: Connection closed by remote host"]).isConnectionLost)
+        #expect(!ResticError(exitCode: 1, rawMessages: ["Bad owner or permissions on /Users/me/.ssh/config"]).isConnectionLost)
+        #expect(!ResticError(exitCode: 12).isConnectionLost)
+    }
+
+    @Test func unreachableServerIsLost() {
+        #expect(BackupCoordinator.isConnectionLost(EngineError.serverUnreachable("pi", details: "ssh: connect to host pi port 22: Operation timed out")))
+        #expect(BackupCoordinator.details(EngineError.serverUnreachable("pi", details: "timed out")) == "timed out")
+        #expect(!BackupCoordinator.isConnectionLost(EngineError.serverRejectedKey("pi")))
+    }
+
+    private func record(_ outcome: BackupRecord.Outcome, disk: String = "A", repeats: Int? = nil) -> BackupRecord {
+        var r = BackupRecord(diskID: disk, diskName: "pi", start: Date(timeIntervalSince1970: 0),
+                             end: Date(timeIntervalSince1970: 1), outcome: outcome, trigger: .scheduled)
+        r.repeats = repeats
+        return r
+    }
+
+    @Test func skippedRecordsStayReadableForOlderVersions() throws {
+        var r = record(.skipped, repeats: 4)
+        r.details = "Broken pipe"
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode([r])
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        #expect(try decoder.decode([BackupRecord].self, from: data) == [r])
+
+        // An older version knows only these outcomes and ignores keys it does not know.
+        struct OldRecord: Decodable {
+            enum Outcome: String, Decodable { case success, warning, failed, cancelled }
+            var outcome: Outcome
+            var messages: [String]
+            var trigger: BackupTrigger
+        }
+        #expect(try decoder.decode([OldRecord].self, from: data).first?.outcome == .cancelled)
+
+        // A real cancelled record stays cancelled.
+        let cancelled = try encoder.encode([record(.cancelled)])
+        #expect(try decoder.decode([BackupRecord].self, from: cancelled).first?.outcome == .cancelled)
+    }
+
+    @Test func skipsInARowAreCounted() {
+        let history = [record(.skipped, repeats: 2), record(.skipped, disk: "B"), record(.skipped), record(.success), record(.skipped)]
+        #expect(BackupCoordinator.skippedInARow(history, diskID: "A") == 3)
+        #expect(BackupCoordinator.skippedInARow(history, diskID: "B") == 1)
+        #expect(BackupCoordinator.skippedInARow([record(.failed), record(.skipped)], diskID: "A") == 0)
+    }
+
+    @Test func skippedRunsDoNotReplaceTheLastResult() {
+        var failed = record(.failed)
+        failed.messages = ["The server did not accept the Nine Lives key."]
+        var skipped = record(.skipped)
+        skipped.messages = ["pi stopped answering, so this backup was skipped."]
+        let results = BackupCoordinator.currentResults(history: [skipped, failed], disks: ["A"], running: nil)
+        #expect(results.map(\.outcome) == [.failed])
+    }
+}

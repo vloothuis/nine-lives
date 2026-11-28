@@ -45,6 +45,7 @@ private extension BackupRecord {
         case .warning: ("exclamationmark.triangle.fill", .orange)
         case .failed: ("xmark.octagon.fill", .red)
         case .cancelled: ("stop.circle.fill", .secondary)
+        case .skipped: ("arrow.uturn.forward.circle", .secondary)
         }
     }
 
@@ -59,6 +60,7 @@ private extension BackupRecord {
         case .warning: "\(what) to \(diskName) with notes"
         case .failed: "\(what) to \(diskName) failed"
         case .cancelled: "\(what) to \(diskName) stopped"
+        case .skipped: "\(what) to \(diskName) skipped"
         }
     }
 
@@ -69,6 +71,12 @@ private extension BackupRecord {
         case .full: "Every folder was checked."
         case nil: nil
         }
+    }
+
+    /// What follows the date in the list.
+    var caption: String {
+        if outcome == .skipped { return (repeats ?? 1) > 1 ? " · \(repeats ?? 1) times" : "" }
+        return messages.isEmpty ? "" : " · \(messages.count) note\(messages.count == 1 ? "" : "s")"
     }
 
     var triggerText: String {
@@ -88,8 +96,7 @@ private struct RecordRow: View {
             Image(systemName: record.icon.0).foregroundStyle(record.icon.1).frame(width: 20)
             VStack(alignment: .leading, spacing: 2) {
                 Text(record.title).lineLimit(1)
-                Text(record.start.formatted(date: .abbreviated, time: .shortened)
-                     + (record.messages.isEmpty ? "" : " · \(record.messages.count) note\(record.messages.count == 1 ? "" : "s")"))
+                Text(record.start.formatted(date: .abbreviated, time: .shortened) + record.caption)
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -122,6 +129,9 @@ private struct RecordDetail: View {
                     row("Started", record.start.formatted(date: .abbreviated, time: .standard))
                     row("Took", Fmt.duration(record.end.timeIntervalSince(record.start)))
                     row("Why", record.triggerText)
+                    if let since = record.skippedSince, let n = record.repeats {
+                        row("Skipped", "\(n) times since \(since.formatted(date: .abbreviated, time: .shortened))")
+                    }
                     if let k = record.kindText { row("Kind", k) }
                     if let stats = record.statsLike { row("Result", Fmt.summary(stats)) }
                     if let name = record.archiveName { row("Snapshot", name) }
@@ -129,7 +139,9 @@ private struct RecordDetail: View {
                 .font(.callout)
 
                 if !record.messages.isEmpty {
-                    if record.outcome == .failed {
+                    if record.outcome == .skipped {
+                        messageList
+                    } else if record.outcome == .failed {
                         section("What went wrong", copy: record.messages.joined(separator: "\n")) { messageList }
                     } else {
                         let groups = c.noteGroups(for: record)
@@ -159,7 +171,20 @@ private struct RecordDetail: View {
                     }
                 }
 
-                if let details = record.details, !details.isEmpty {
+                if let details = record.details, !details.isEmpty, record.outcome == .skipped {
+                    // Nothing to worry about, so the raw output stays folded away for those who want it.
+                    DisclosureGroup("Technical details") {
+                        HStack {
+                            Spacer()
+                            Button("Copy") { copyToPasteboard(details) }.buttonStyle(.link).font(.callout)
+                        }
+                        Text(details).font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(10)
+                            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+                    }
+                } else if let details = record.details, !details.isEmpty {
                     section("Technical details", copy: details) {
                         Text(details).font(.system(.caption, design: .monospaced))
                             .textSelection(.enabled)

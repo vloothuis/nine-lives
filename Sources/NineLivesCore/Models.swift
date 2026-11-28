@@ -347,7 +347,8 @@ public enum BackupTrigger: String, Codable, Sendable {
 }
 
 public struct BackupRecord: Codable, Identifiable, Equatable, Sendable {
-    public enum Outcome: String, Codable, Sendable { case success, warning, failed, cancelled }
+    /// `skipped`: the server went out of reach during a run that was not started by the user.
+    public enum Outcome: String, Codable, Sendable { case success, warning, failed, cancelled, skipped }
     /// `quick` rebuilt only changed folders; `full` looked at every folder.
     public enum Kind: String, Codable, Sendable { case quick, full }
 
@@ -370,6 +371,9 @@ public struct BackupRecord: Codable, Identifiable, Equatable, Sendable {
     public var folderIndexSnapshot: String?
     /// Whether Nine Lives had Full Disk Access during the backup. Nil for records written by older versions.
     public var fullDiskAccess: Bool?
+    /// For a skipped record: how many skips in a row it stands for, and when the first one was.
+    public var repeats: Int?
+    public var skippedSince: Date?
 
     public init(
         id: UUID = UUID(), diskID: String, diskName: String, start: Date, end: Date, outcome: Outcome,
@@ -385,6 +389,54 @@ public struct BackupRecord: Codable, Identifiable, Equatable, Sendable {
         self.stats = stats
         self.messages = messages
         self.trigger = trigger
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, diskID, diskName, start, end, outcome, archiveName, stats, messages, details, trigger, kind
+        case folderIndexSnapshot, fullDiskAccess, skipped, repeats, skippedSince
+    }
+
+    // Versions without `skipped` fail to read the whole state file on an unknown outcome, so a skipped run
+    // is written as `cancelled` with a `skipped` flag.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        diskID = try c.decode(String.self, forKey: .diskID)
+        diskName = try c.decode(String.self, forKey: .diskName)
+        start = try c.decode(Date.self, forKey: .start)
+        end = try c.decode(Date.self, forKey: .end)
+        outcome = try c.decodeIfPresent(Bool.self, forKey: .skipped) == true ? .skipped : try c.decode(Outcome.self, forKey: .outcome)
+        archiveName = try c.decodeIfPresent(String.self, forKey: .archiveName)
+        stats = try c.decodeIfPresent(ArchiveStats.self, forKey: .stats)
+        messages = try c.decode([String].self, forKey: .messages)
+        details = try c.decodeIfPresent(String.self, forKey: .details)
+        trigger = try c.decode(BackupTrigger.self, forKey: .trigger)
+        kind = try c.decodeIfPresent(Kind.self, forKey: .kind)
+        folderIndexSnapshot = try c.decodeIfPresent(String.self, forKey: .folderIndexSnapshot)
+        fullDiskAccess = try c.decodeIfPresent(Bool.self, forKey: .fullDiskAccess)
+        repeats = try c.decodeIfPresent(Int.self, forKey: .repeats)
+        skippedSince = try c.decodeIfPresent(Date.self, forKey: .skippedSince)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(diskID, forKey: .diskID)
+        try c.encode(diskName, forKey: .diskName)
+        try c.encode(start, forKey: .start)
+        try c.encode(end, forKey: .end)
+        try c.encode(outcome == .skipped ? .cancelled : outcome, forKey: .outcome)
+        if outcome == .skipped { try c.encode(true, forKey: .skipped) }
+        try c.encodeIfPresent(archiveName, forKey: .archiveName)
+        try c.encodeIfPresent(stats, forKey: .stats)
+        try c.encode(messages, forKey: .messages)
+        try c.encodeIfPresent(details, forKey: .details)
+        try c.encode(trigger, forKey: .trigger)
+        try c.encodeIfPresent(kind, forKey: .kind)
+        try c.encodeIfPresent(folderIndexSnapshot, forKey: .folderIndexSnapshot)
+        try c.encodeIfPresent(fullDiskAccess, forKey: .fullDiskAccess)
+        try c.encodeIfPresent(repeats, forKey: .repeats)
+        try c.encodeIfPresent(skippedSince, forKey: .skippedSince)
     }
 }
 
