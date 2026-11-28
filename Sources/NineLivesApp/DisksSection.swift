@@ -84,7 +84,7 @@ struct DisksSection: View {
 
     private func actionsMenu(_ disk: KnownDisk, connected: Bool) -> some View {
         Menu {
-            Button("Check Backups") { c.startVerification(diskID: disk.id) }
+            Button("Check Backups") { c.startVerification(diskID: disk.id, byUser: true) }
                 .disabled(!connected || !c.activity.isIdle)
             if connected, !disk.isRemote {
                 Button("Eject") {

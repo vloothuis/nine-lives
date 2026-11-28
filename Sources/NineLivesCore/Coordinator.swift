@@ -60,6 +60,8 @@ public final class BackupCoordinator {
     public private(set) var networkMetered = false
     /// Servers that did not answer the last time a scheduled backup or check was due.
     public private(set) var unreachableServers: Set<String> = []
+    /// Servers the probe reached directly. Through a proxy or jump host the probe always succeeds.
+    private var directServers: Set<String> = []
 
     /// Large items found after a backup that wait for the user to choose.
     public private(set) var optionalFindings: [OptionalFinding] = []
@@ -221,6 +223,15 @@ public final class BackupCoordinator {
     }
 
     private func addRecord(_ r: BackupRecord) {
+        // Skips in a row become one record, so a long trip does not push real backups out of the history.
+        if r.outcome == .skipped, let prev = state.history.first, prev.outcome == .skipped, prev.diskID == r.diskID {
+            var merged = r
+            merged.repeats = (prev.repeats ?? 1) + 1
+            merged.skippedSince = prev.skippedSince ?? prev.start
+            state.history[0] = merged
+            save()
+            return
+        }
         state.history.insert(r, at: 0)
         if state.history.count > 300 { state.history.removeLast(state.history.count - 300) }
         save()
@@ -333,7 +344,9 @@ public final class BackupCoordinator {
         guard let remote = disk.remote, !probing else { return }
         probing = true
         Task {
-            let ok = await ServerReachability.isReachable(remote)
+            let probe = await ServerReachability.probe(remote)
+            let ok = probe.reachable
+            if probe.direct { directServers.insert(disk.id) } else { directServers.remove(disk.id) }
             probing = false
             if ok { unreachableServers.remove(disk.id) } else { unreachableServers.insert(disk.id) }
             if ok, activity.isIdle { action(self) }
@@ -549,6 +562,15 @@ public final class BackupCoordinator {
             record.end = Date()
             if Task.isCancelled || error is CancellationError {
                 record.outcome = .cancelled
+            } else if disk.isRemote, Self.isConnectionLost(error) {
+                // Being away from a server is normal. Automatic runs are skipped quietly; a run someone
+                // started says what happened.
+                record.outcome = trigger == .manual ? .failed : .skipped
+                record.messages = [trigger == .manual
+                    ? "The connection to \(disk.name) dropped. Check that \(disk.name) is on and awake, then try again."
+                    : "\(disk.name) stopped answering, so this backup was skipped. Nine Lives tries again when \(disk.name) is reachable."]
+                record.details = Self.details(error)
+                if trigger != .manual { updateDisk(disk.id) { $0.lastFailure = Date() } }
             } else {
                 record.outcome = .failed
                 record.messages = [Self.friendly(error)]
@@ -568,7 +590,7 @@ public final class BackupCoordinator {
             // Verification runs right after a backup when it is due and the disk is still connected.
             if let d = self.disk(disk.id),
                Policy.isVerificationDue(last: d.lastVerification, now: Date(), everyDays: state.settings.verifyEveryDays) {
-                startVerification(diskID: d.id)
+                startVerification(diskID: d.id, byUser: trigger == .manual)
             }
         }
     }
@@ -649,18 +671,17 @@ public final class BackupCoordinator {
             let title = r.outcome == .warning ? "Backup finished with notes" : "Backup finished"
             notifier.post(title: title, body: files + tail, id: "backup-\(disk.id)", sound: true)
         case .failed:
-            // Servers are often out of reach, for example while travelling. The menu bar shows the error
-            // and the stale reminder covers long gaps, so scheduled server failures stay quiet.
-            if r.trigger == .scheduled, disk.isRemote { return }
+            // A server out of reach gives a skipped run, so a failure here needs the user.
             notifier.post(title: "Backup failed", body: r.messages.first ?? "Something went wrong.", id: "backup-\(disk.id)", sound: true)
-        case .cancelled:
+        case .cancelled, .skipped:
             break
         }
     }
 
     // MARK: - Verification
 
-    public func startVerification(diskID: String) {
+    /// `byUser` is true when someone chose Check Backups and is waiting for the result.
+    public func startVerification(diskID: String, byUser: Bool = false) {
         guard activity.isIdle, let engine, let disk = disk(diskID) else { return }
         let volume: VolumeInfo?
         do { volume = try access(to: disk) } catch { return }
@@ -681,7 +702,20 @@ public final class BackupCoordinator {
                                   id: "verify-\(diskID)", sound: true)
                 }
             } catch {
-                if !(Task.isCancelled || error is CancellationError) {
+                if Task.isCancelled || error is CancellationError {
+                    // Stopped: the previous result stays.
+                } else if disk.isRemote, Self.isConnectionLost(error) {
+                    // The check learned nothing about the backups, so the previous result stays and the check
+                    // stays due. A scheduled check waits like a skipped backup; the next good backup starts it.
+                    backupLog.info("Check of \(disk.name, privacy: .private) stopped: connection lost")
+                    if byUser {
+                        notifier.post(title: "The check did not finish",
+                                      body: "The connection to \(disk.name) dropped. Check that \(disk.name) is on and awake, then try again.",
+                                      id: "verify-\(diskID)", sound: false)
+                    } else {
+                        updateDisk(diskID) { $0.lastFailure = Date() }
+                    }
+                } else {
                     let summary = VerificationSummary(date: Date(), repositoryOK: false, filesRestored: 0, problems: [Self.friendly(error)])
                     updateDisk(diskID) { $0.lastVerification = summary }
                 }
@@ -734,13 +768,13 @@ public final class BackupCoordinator {
         return Self.currentResults(history: state.history, disks: state.disks.map(\.id), running: running)
     }
 
-    /// The latest finished backup of each known disk that left messages, newest first. A cancelled
-    /// backup says nothing new, so the one before it counts. The disk being backed up is left out:
+    /// The latest finished backup of each known disk that left messages, newest first. A cancelled or
+    /// skipped backup says nothing new, so the one before it counts. The disk being backed up is left out:
     /// the run in progress replaces its last result.
     nonisolated public static func currentResults(history: [BackupRecord], disks: [String], running: String?) -> [BackupRecord] {
         var seen: Set<String> = []
         var out: [BackupRecord] = []
-        for r in history where r.outcome != .cancelled && disks.contains(r.diskID) {
+        for r in history where r.outcome != .cancelled && r.outcome != .skipped && disks.contains(r.diskID) {
             guard seen.insert(r.diskID).inserted else { continue }
             if r.diskID != running && !r.messages.isEmpty { out.append(r) }
         }
@@ -759,6 +793,7 @@ public final class BackupCoordinator {
         if let last = currentResults.first(where: { $0.outcome == .failed }) {
             return .error(last.messages.first ?? "The last backup to \(last.diskName) failed.")
         }
+        if let name = keepsSkipping { return .warning("Backups to \(name) keep getting interrupted") }
         switch Policy.staleness(disks: state.disks, now: Date(), remindAfterDays: state.settings.remindAfterDays) {
         case .neverBackedUp: return .warning("No backup yet")
         case .stale(let d): return .warning("Last backup \(d) days ago")
@@ -770,10 +805,36 @@ public final class BackupCoordinator {
         return .ok(latestSuccess ?? Date())
     }
 
+    /// Runs skipped in a row before the status shows a warning.
+    static let skipsBeforeWarning = 3
+
+    /// The name of a server whose last few runs were all skipped although it answered the probe.
+    var keepsSkipping: String? {
+        state.disks.first { d in
+            // Through a proxy the probe cannot tell whether the server is near, so skips are expected while away.
+            // Until the first probe after launch the kind of connection is unknown, and there is no warning.
+            d.isRemote && directServers.contains(d.id)
+                && Self.skippedInARow(state.history, diskID: d.id) >= Self.skipsBeforeWarning
+        }?.name
+    }
+
+    nonisolated static func skippedInARow(_ history: [BackupRecord], diskID: String) -> Int {
+        history.lazy.filter { $0.diskID == diskID }.prefix { $0.outcome == .skipped }.reduce(0) { $0 + ($1.repeats ?? 1) }
+    }
+
+    /// A network failure or dropped connection, as opposed to a problem the user has to fix.
+    nonisolated static func isConnectionLost(_ error: Error) -> Bool {
+        if case EngineError.serverUnreachable = error { return true }
+        return (error as? ResticError)?.isConnectionLost == true
+    }
+
     static func friendly(_ error: Error) -> String {
         error.localizedDescription
     }
 
     /// Technical output behind an error, if there is any.
-    nonisolated public static func details(_ error: Error) -> String? { (error as? ResticError)?.details }
+    nonisolated public static func details(_ error: Error) -> String? {
+        if case EngineError.serverUnreachable(_, let details) = error { return details }
+        return (error as? ResticError)?.details
+    }
 }

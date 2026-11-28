@@ -14,9 +14,14 @@ public enum ServerReachability {
 
     /// Checks the server the way ssh would reach it, so host aliases from `~/.ssh/config` work.
     public static func isReachable(_ server: RemoteServer, timeout: TimeInterval = 4) async -> Bool {
+        await probe(server, timeout: timeout).reachable
+    }
+
+    /// `direct` is false when ssh goes through a proxy: then `reachable` is always true and says nothing.
+    public static func probe(_ server: RemoteServer, timeout: TimeInterval = 4) async -> (reachable: Bool, direct: Bool) {
         let target = await resolve(server)
-        if target.viaProxy { return true }
-        return await isReachable(host: target.host, port: target.port, timeout: timeout)
+        if target.viaProxy { return (true, false) }
+        return (await isReachable(host: target.host, port: target.port, timeout: timeout), true)
     }
 
     /// Asks ssh for its effective settings. Falls back to the stored host and port when that fails.

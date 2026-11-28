@@ -15,7 +15,8 @@ public enum EngineError: LocalizedError, Equatable {
     case noSources
     case busy
     case offline(String)
-    case serverUnreachable(String)
+    /// `details` holds what ssh printed.
+    case serverUnreachable(String, details: String? = nil)
     case serverRejectedKey(String)
     case hostKeyChanged(String)
     case repositoryChanged(String)
@@ -35,7 +36,7 @@ public enum EngineError: LocalizedError, Equatable {
         case .noSources: return "None of the folders to back up exist."
         case .busy: return "Another backup task is running. Try again when it finishes."
         case .offline(let n): return "This Mac is offline, so \(n) cannot be reached."
-        case .serverUnreachable(let n): return "Could not reach \(n). Check the address and your network connection."
+        case .serverUnreachable(let n, _): return "Could not reach \(n). Check the address and your network connection."
         case .serverRejectedKey(let n): return "\(n) did not accept the Nine Lives key. Add the key to the server and try again."
         case .hostKeyChanged(let n):
             return "The identity of \(n) changed. This can mean the server was reinstalled, or that someone is intercepting the connection. Backups to it are paused."
@@ -476,7 +477,11 @@ public final class BackupEngine: Sendable {
         case .ok: return
         case .rejectedKey: throw EngineError.serverRejectedKey(disk.name)
         case .hostKeyChanged: throw EngineError.hostKeyChanged(disk.name)
-        case .unreachable: throw EngineError.serverUnreachable(disk.name)
+        case .unreachable(let text):
+            // ssh exits with 255 for every failure. Only network failures mean the server is out of reach.
+            let e = ResticError(exitCode: 255, rawMessages: [text])
+            guard e.isConnectionLost else { throw e }
+            throw EngineError.serverUnreachable(disk.name, details: text)
         }
     }
 
@@ -603,7 +608,7 @@ public final class BackupEngine: Sendable {
                 next.sweepErrors = Array((kept + r.errors).prefix(2000))
                 next.hardLinksChanged = r.hardLinksChanged
                 return MadeBackup(create: create, kind: .quick, folderIndexSnapshot: state.sweepSnapshotID, incremental: next)
-            } catch let e as ResticError where !(e.isConnectionProblem || e.isLockProblem || e.isWrongPassphrase || e.isOutOfSpace) {
+            } catch let e as ResticError where !(e.isConnectionProblem || e.isConnectionLost || e.isLockProblem || e.isWrongPassphrase || e.isOutOfSpace) {
                 backupLog.error("Quick backup failed, making a full backup: \(e.summary)")
                 notes.append("The quick backup failed, so a full backup was made instead: \(e.summary)")
                 decision = .full(reason: "the quick backup failed", force: false)

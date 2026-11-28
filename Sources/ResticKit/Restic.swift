@@ -377,7 +377,7 @@ public final class Restic: Sendable {
         case .cancelled: throw CancellationError()
         case .failure:
             let err = e.logs.error(exitCode: e.code)
-            if err.isLockProblem || err.isWrongPassphrase || err.isConnectionProblem { throw err }
+            if err.isLockProblem || err.isWrongPassphrase || err.isConnectionProblem || err.isConnectionLost { throw err }
             return CheckResult(passed: false, messages: err.messages)
         }
     }
