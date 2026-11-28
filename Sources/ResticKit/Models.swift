@@ -166,6 +166,8 @@ public struct CreateOptions: Sendable {
     public var excludeCaches: Bool
     public var oneFileSystem: Bool
     public var excludeIfPresent: [String]
+    /// Folder names that nl-engine skips where Git ignores them. restic has no such option.
+    public var excludeGitignored: [String]
     /// Stable host name, so restic finds the previous snapshot even when the Mac is renamed.
     public var host: String?
     public var tag: String
@@ -179,6 +181,7 @@ public struct CreateOptions: Sendable {
         excludeCaches: Bool = true,
         oneFileSystem: Bool = true,
         excludeIfPresent: [String] = [".nobackup"],
+        excludeGitignored: [String] = [],
         host: String? = nil,
         tag: String = "ninelives",
         readConcurrency: Int = 8
@@ -189,6 +192,7 @@ public struct CreateOptions: Sendable {
         self.excludeCaches = excludeCaches
         self.oneFileSystem = oneFileSystem
         self.excludeIfPresent = excludeIfPresent
+        self.excludeGitignored = excludeGitignored
         self.host = host
         self.tag = tag
         self.readConcurrency = readConcurrency

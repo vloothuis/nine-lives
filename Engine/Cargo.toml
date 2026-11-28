@@ -9,6 +9,7 @@ license = "BSD-3-Clause"
 anyhow = "1"
 bytes = "1"
 hex = "0.4"
+ignore = "0.4"
 libc = "0.2"
 rustic_backend = { version = "0.8.0", default-features = false }
 rustic_core = "=0.14.0"

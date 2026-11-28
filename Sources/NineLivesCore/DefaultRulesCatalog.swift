@@ -1,8 +1,8 @@
 import Foundation
 
 // Built-in rules for developer tools and macOS. Everything here is rebuilt or downloaded again by
-// the tool that made it. Names that are common words (build, dist, target, vendor, Library) are
-// left out on purpose, because they can hold real work.
+// the tool that made it. Names that are common words (build, dist, target, vendor) can hold real
+// work, so they are skipped only where the project's .gitignore ignores them.
 //
 // Folders that hold secrets or settings (.ssh, .aws, .docker, .gem, .bundle, .cargo as a whole,
 // .m2/settings.xml, .kube/config) are never listed. Only their regenerable sub-folders are.
@@ -19,7 +19,7 @@ private func group(_ category: String, _ detail: String, ask: Bool = false, _ it
 extension DefaultRules {
     static let developer: [ExcludeRule] =
         javascript + python + rust + golang + jvm + apple + native + dotnet + ruby + php
-        + functional + mobile + games + infrastructure + editors + toolchains + aiModels
+        + functional + mobile + games + infrastructure + editors + toolchains + aiModels + gitignored
 
     static let macOS: [ExcludeRule] = system + browsersAndApps + media + vmsAndDevices
 
@@ -159,6 +159,16 @@ extension DefaultRules {
         ("Folders with restored .NET packages (obj)", .marker, "project.assets.json"),
         ("Visual Studio cache", .anywhere, ".vs"),
         ("Test results", .anywhere, "TestResults"),
+    ])
+
+    // Common names, so they are skipped only where the project's .gitignore ignores them.
+    private static let gitignored = group("Ignored by Git", "Skipped only where the project's .gitignore ignores it, because a tool makes it again.", [
+        ("Dependencies in vendor (Composer, Go, Bundler)", .gitignored, "vendor"),
+        ("Build output in target (Cargo, Maven, sbt)", .gitignored, "target"),
+        ("Build output in build", .gitignored, "build"),
+        ("Build output in dist", .gitignored, "dist"),
+        ("CocoaPods in Pods", .gitignored, "Pods"),
+        ("Test coverage reports", .gitignored, "coverage"),
     ])
 
     private static let ruby = group("Ruby", "Installed again by Bundler or gem.", [
