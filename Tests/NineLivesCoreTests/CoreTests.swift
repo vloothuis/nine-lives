@@ -436,6 +436,38 @@ func fakeVolume(at url: URL, encrypted: Bool) -> VolumeInfo {
     }
 }
 
+@Suite struct CurrentResultsTests {
+    func rec(_ disk: String, _ outcome: BackupRecord.Outcome, _ messages: [String] = ["m"], at t: TimeInterval) -> BackupRecord {
+        BackupRecord(diskID: disk, diskName: disk, start: Date(timeIntervalSince1970: t), end: Date(timeIntervalSince1970: t),
+                     outcome: outcome, messages: messages, trigger: .manual)
+    }
+
+    @Test func latestPerDiskNewestFirst() {
+        // History is newest first.
+        let h = [rec("pi", .failed, at: 5), rec("usb", .warning, at: 4), rec("pi", .success, [], at: 3), rec("usb", .failed, at: 2)]
+        let r = BackupCoordinator.currentResults(history: h, disks: ["pi", "usb"], running: nil)
+        #expect(r.map(\.diskID) == ["pi", "usb"])
+        #expect(r.map(\.outcome) == [.failed, .warning])
+    }
+
+    @Test func runningDiskIsHidden() {
+        let h = [rec("pi", .failed, at: 5), rec("usb", .failed, at: 4)]
+        let r = BackupCoordinator.currentResults(history: h, disks: ["pi", "usb"], running: "pi")
+        #expect(r.map(\.diskID) == ["usb"])
+    }
+
+    @Test func successWithoutMessagesClearsOlderFailure() {
+        let h = [rec("pi", .success, [], at: 5), rec("pi", .failed, at: 4)]
+        #expect(BackupCoordinator.currentResults(history: h, disks: ["pi"], running: nil).isEmpty)
+    }
+
+    @Test func cancelledFallsBackAndRemovedDisksAreLeftOut() {
+        let h = [rec("pi", .cancelled, at: 5), rec("pi", .failed, at: 4), rec("old", .failed, at: 3)]
+        let r = BackupCoordinator.currentResults(history: h, disks: ["pi"], running: nil)
+        #expect(r.map(\.outcome) == [.failed])
+    }
+}
+
 @Suite struct BackupNotesTests {
     @Test func groupsByFolderAndCause() {
         let groups = BackupNotes.group([

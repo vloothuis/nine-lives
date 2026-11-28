@@ -180,26 +180,34 @@ struct OverviewView: View {
     }
 
     @ViewBuilder private var notes: some View {
-        if let last = c.state.history.first, !last.messages.isEmpty, last.outcome != .cancelled {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(last.outcome == .failed ? "What went wrong" : "Notes from the last backup").font(.headline)
-                Card {
-                    VStack(alignment: .leading, spacing: 6) {
-                        if last.outcome == .failed, let m = last.messages.first {
-                            ErrorBox(error: ShownError(m, details: last.details))
-                        } else {
-                            let groups = c.noteGroups(for: last)
-                            ForEach(groups.prefix(5)) { g in NoteRow(group: g, record: last) }
-                            if groups.count > 5 {
-                                HStack(spacing: 4) {
-                                    Text("And \(groups.count - 5) more.")
-                                    Button("Show in Activity") { openWindow(id: WindowID.activity) }.buttonStyle(.link)
-                                }
-                                .font(.callout).foregroundStyle(.secondary)
+        ForEach(c.currentResults) { r in result(r) }
+    }
+
+    /// The messages of one disk's latest backup, with the disk and the time it ended.
+    private func result(_ r: BackupRecord) -> some View {
+        let when = r.end.formatted(date: .abbreviated, time: .shortened)
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(r.outcome == .failed ? "Backup to \(r.diskName) failed" : "Notes from the backup to \(r.diskName)")
+                    .font(.headline)
+                Text(when).font(.callout).foregroundStyle(.secondary)
+            }
+            Card {
+                VStack(alignment: .leading, spacing: 6) {
+                    if r.outcome == .failed, let m = r.messages.first {
+                        ErrorBox(error: ShownError(m, details: r.details))
+                    } else {
+                        let groups = c.noteGroups(for: r)
+                        ForEach(groups.prefix(5)) { g in NoteRow(group: g, record: r) }
+                        if groups.count > 5 {
+                            HStack(spacing: 4) {
+                                Text("And \(groups.count - 5) more.")
+                                Button("Show in Activity") { openWindow(id: WindowID.activity) }.buttonStyle(.link)
                             }
-                            if groups.isEmpty {
-                                Text("Some files changed or disappeared while the backup ran. This is normal.").font(.callout)
-                            }
+                            .font(.callout).foregroundStyle(.secondary)
+                        }
+                        if groups.isEmpty {
+                            Text("Some files changed or disappeared while the backup ran. This is normal.").font(.callout)
                         }
                     }
                 }

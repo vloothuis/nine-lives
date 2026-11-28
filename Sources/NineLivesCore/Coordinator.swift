@@ -727,6 +727,26 @@ public final class BackupCoordinator {
 
     public var latestSuccess: Date? { state.disks.compactMap(\.lastBackup).max() }
 
+    /// The results the overview shows now: the latest backup of each disk, as long as it still applies.
+    public var currentResults: [BackupRecord] {
+        var running: String?
+        if case .backingUp(let id, _) = activity { running = id }
+        return Self.currentResults(history: state.history, disks: state.disks.map(\.id), running: running)
+    }
+
+    /// The latest finished backup of each known disk that left messages, newest first. A cancelled
+    /// backup says nothing new, so the one before it counts. The disk being backed up is left out:
+    /// the run in progress replaces its last result.
+    nonisolated public static func currentResults(history: [BackupRecord], disks: [String], running: String?) -> [BackupRecord] {
+        var seen: Set<String> = []
+        var out: [BackupRecord] = []
+        for r in history where r.outcome != .cancelled && disks.contains(r.diskID) {
+            guard seen.insert(r.diskID).inserted else { continue }
+            if r.diskID != running && !r.messages.isEmpty { out.append(r) }
+        }
+        return out
+    }
+
     public var status: OverallStatus {
         if state.disks.isEmpty { return .needsSetup }
         switch activity {
@@ -736,8 +756,8 @@ public final class BackupCoordinator {
         case .idle: break
         }
         if fullDiskAccessLost { return .warning("Full Disk Access is off") }
-        if let last = state.history.first, last.outcome == .failed {
-            return .error(last.messages.first ?? "The last backup failed.")
+        if let last = currentResults.first(where: { $0.outcome == .failed }) {
+            return .error(last.messages.first ?? "The last backup to \(last.diskName) failed.")
         }
         switch Policy.staleness(disks: state.disks, now: Date(), remindAfterDays: state.settings.remindAfterDays) {
         case .neverBackedUp: return .warning("No backup yet")
